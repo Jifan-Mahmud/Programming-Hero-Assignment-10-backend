@@ -3,6 +3,9 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 const express = require("express");
 const app = express();
 const cors = require("cors");
+const { createToken, verifyToken, optionalToken } = require("./jwt");
+const bcrypt = require("bcrypt");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const port = process.env.PORT;
 const uri = process.env.MONGODB_URI;
