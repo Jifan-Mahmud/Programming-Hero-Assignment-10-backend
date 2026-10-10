@@ -24,6 +24,17 @@ const client = new MongoClient(uri, {
 async function runStableAPIConnect() {
   try {
     await client.connect();
+    const db = client.db(dbName);
+     // Collections
+    const usersCollection = db.collection("users");
+    const classesCollection = db.collection("classes");
+    const bookingsCollection = db.collection("bookings");
+    const favoritesCollection = db.collection("favorites");
+    const trainerApplicationsCollection = db.collection("trainer_applications");
+    const forumPostsCollection = db.collection("forum_posts");
+    const notificationsCollection = db.collection("notifications");
+
+    console.log(`Connected to MongoDB database: ${dbName}`);
 
     const result = await client.db("admin").command({ ping: 1 });
 
