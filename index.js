@@ -105,6 +105,27 @@ async function runStableAPIConnect() {
       }
     });
 
+    app.get("/api/classes/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid class ID format" });
+        }
+
+        const singleClass = await classesCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!singleClass) {
+          return res.status(404).json({ message: "Class not found" });
+        }
+
+        res.json(singleClass);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch class" });
+      }
+    });
+
     console.log(`Connected to MongoDB database: ${dbName}`);
 
     const result = await client.db("admin").command({ ping: 1 });
