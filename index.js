@@ -473,6 +473,41 @@ async function runStableAPIConnect() {
       }
     });
 
+     // Trainer to User
+    app.patch("/api/users/:id/demote", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid user ID" });
+        }
+
+        await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role: "user" } }
+        );
+
+        res.json({
+          success: true,
+          message: "Trainer demoted to standard user successfully",
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to demote trainer" });
+      }
+    });
+
+    // Get Active Trainers List
+    app.get("/api/users/trainers", async (req, res) => {
+      try {
+        const trainers = await usersCollection
+          .find({ role: "trainer" })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(trainers);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch trainers" });
+      }
+    });
+
 module.exports = { client, runStableAPIConnect };
 
 app.get("/", (req, res) => {
