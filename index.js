@@ -1,21 +1,40 @@
+// PulseForge Backend Server - Updated
 require("dotenv").config();
-const { MongoClient, ServerApiVersion } = require("mongodb");
 const express = require("express");
-const app = express();
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
 const { createToken, verifyToken, optionalToken } = require("./jwt");
 const bcrypt = require("bcrypt");
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
+const app = express();
 const port = process.env.PORT;
 const uri = process.env.MONGODB_URI;
-
-app.use(cors());
-app.use(express.json());
-
 const dbName = process.env.DB_NAME;
 const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3001";
 
+// Middlewares
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (
+        !origin ||
+        origin.startsWith("http://localhost") ||
+        origin.startsWith("http://127.0.0.1") ||
+        origin.includes("vercel.app")
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
+    credentials: true,
+  })
+);
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(cookieParser());
+
+// MongoDB Client
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -24,11 +43,12 @@ const client = new MongoClient(uri, {
   },
 });
 
-async function runStableAPIConnect() {
+async function run() {
   try {
     await client.connect();
     const db = client.db(dbName);
-     // Collections
+
+    // Collections
     const usersCollection = db.collection("users");
     const classesCollection = db.collection("classes");
     const bookingsCollection = db.collection("bookings");
@@ -37,97 +57,182 @@ async function runStableAPIConnect() {
     const forumPostsCollection = db.collection("forum_posts");
     const notificationsCollection = db.collection("notifications");
 
+    console.log(`Connected to MongoDB database: ${dbName}`);
 
-    app.get("/api/classes", async (req, res) => {
+    // Helper: Find user by email
+    const getUserByEmail = async (email) => {
+      if (!email) return null;
+      return await usersCollection.findOne({ email });
+    };
+
+    // Middleware: Soft block check for state-changing requests
+    const checkBlockedUser = async (req, res, next) => {
+      if (!req.user || !req.user.email) {
+        return res.status(401).json({ message: "Authentication required" });
+      }
+
+      const dbUser = await getUserByEmail(req.user.email);
+      if (dbUser && dbUser.status === "blocked") {
+        return res.status(403).json({
+          message: "Action restricted by Admin",
+          blocked: true,
+        });
+      }
+      next();
+    };
+
+    // Middleware: Verify Admin role
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.user?.email;
+      const user = await getUserByEmail(email);
+      if (user?.role !== "admin") {
+        return res.status(403).json({ message: "Access forbidden: Admin only" });
+      }
+      next();
+    };
+
+    // Middleware: Verify Trainer or Admin role
+    const verifyTrainer = async (req, res, next) => {
+      const email = req.user?.email;
+      const user = await getUserByEmail(email);
+      if (user?.role !== "trainer" && user?.role !== "admin") {
+        return res
+          .status(403)
+          .json({ message: "Access forbidden: Trainer or Admin only" });
+      }
+      next();
+    };
+
+    /* ========================================================
+       1. AUTH & JWT ENDPOINTS (jose-cjs + HTTPOnly Cookie)
+       ======================================================== */
+
+    // Issue / Refresh JWT Token and save/sync user in DB
+    app.post("/api/jwt", async (req, res) => {
       try {
-        const {
-          search = "",
-          category = "",
-          page = 1,
-          limit = 6,
-          featured = "false",
-        } = req.query;
-
-        const query = { status: "Approved" };
-
-        // Search by class name using MongoDB $regex (Challenge Requirement 1)
-        if (search.trim()) {
-          query.name = { $regex: search.trim(), $options: "i" };
+        const { email, name, image, role } = req.body;
+        if (!email) {
+          return res.status(400).json({ message: "Email is required" });
         }
 
-        // Filter by category using MongoDB $in (Challenge Requirement 2)
-        if (category && category !== "all") {
-          const categories = category
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean);
-          if (categories.length > 0) {
-            query.category = { $in: categories };
+        // Upsert user in DB
+        let user = await getUserByEmail(email);
+        if (!user) {
+          const newUser = {
+            name: name || "User",
+            email,
+            image: image || "",
+            role: role || "user",
+            status: "active",
+            createdAt: new Date(),
+          };
+          const insertResult = await usersCollection.insertOne(newUser);
+          user = { ...newUser, _id: insertResult.insertedId };
+        } else {
+          // If name or image changed, update softly
+          if ((name && user.name !== name) || (image && user.image !== image)) {
+            await usersCollection.updateOne(
+              { email },
+              { $set: { name: name || user.name, image: image || user.image } }
+            );
           }
         }
 
-        const pageNum = Math.max(1, parseInt(page) || 1);
-        const limitNum = Math.max(1, parseInt(limit) || 6);
-        const skip = (pageNum - 1) * limitNum;
+        // Sign JWT Token
+        const tokenPayload = {
+          userId: user._id.toString(),
+          email: user.email,
+          name: user.name,
+          role: user.role || "user",
+          status: user.status || "active",
+        };
 
-        // Sorting: If featured, sort by bookingCount desc
-        const sortOptions =
-          featured === "true" ? { bookingCount: -1, createdAt: -1 } : { createdAt: -1 };
+        const token = await createToken(tokenPayload);
 
-        const total = await classesCollection.countDocuments(query);
-        const classes = await classesCollection
-          .find(query)
-          .sort(sortOptions)
-          .skip(skip)
-          .limit(limitNum)
-          .toArray();
+        // Store JWT securely in HTTPOnly Cookie
+        res.cookie("pulseforge_token", token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+          maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        });
 
         res.json({
-          classes,
-          total,
-          totalPages: Math.ceil(total / limitNum) || 1,
-          currentPage: pageNum,
+          success: true,
+          token,
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            image: user.image,
+            role: user.role,
+            status: user.status,
+          },
         });
       } catch (err) {
-        console.error("Classes fetch error:", err);
-        res.status(500).json({ message: "Failed to fetch classes" });
+        console.error("JWT creation error:", err);
+        res.status(500).json({ message: "Failed to generate token" });
       }
     });
 
-
-     app.get("/api/classes/featured", async (req, res) => {
+    // Direct Login with email + password (for seeded and registered users)
+    app.post("/api/login", async (req, res) => {
       try {
-        const classes = await classesCollection
-          .find({ status: "Approved" })
-          .sort({ bookingCount: -1, createdAt: -1 })
-          .limit(6)
-          .toArray();
-        res.json(classes);
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch featured classes" });
-      }
-    });
-
-    app.get("/api/classes/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({ message: "Invalid class ID format" });
+        const { email, password } = req.body;
+        if (!email || !password) {
+          return res.status(400).json({ message: "Email and password are required" });
         }
 
-        const singleClass = await classesCollection.findOne({
-          _id: new ObjectId(id),
+        const user = await getUserByEmail(email);
+        if (!user) {
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+
+        if (!user.password) {
+          return res.status(401).json({ message: "Invalid email or password. Please use Google login or register a new account." });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+
+        // Sign JWT Token
+        const tokenPayload = {
+          userId: user._id.toString(),
+          email: user.email,
+          name: user.name,
+          role: user.role || "user",
+          status: user.status || "active",
+        };
+
+        const token = await createToken(tokenPayload);
+
+        res.cookie("pulseforge_token", token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+          maxAge: 7 * 24 * 60 * 60 * 1000,
         });
 
-        if (!singleClass) {
-          return res.status(404).json({ message: "Class not found" });
-        }
-
-        res.json(singleClass);
+        res.json({
+          success: true,
+          token,
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            image: user.image,
+            role: user.role,
+            status: user.status,
+          },
+        });
       } catch (err) {
-        res.status(500).json({ message: "Failed to fetch class" });
+        console.error("Login error:", err);
+        res.status(500).json({ message: "Login failed" });
       }
     });
+
     // Direct Register with email + password + role
     app.post("/api/register", async (req, res) => {
       try {
@@ -205,65 +310,427 @@ async function runStableAPIConnect() {
         res.status(500).json({ message: "Registration failed" });
       }
     });
-    // Direct Login with email + password (for seeded and registered users)
-    app.post("/api/login", async (req, res) => {
+
+    // Clear JWT Cookie on logout
+    app.post("/api/logout", (req, res) => {
+      res.clearCookie("pulseforge_token", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      });
+      res.json({ success: true, message: "Logged out successfully" });
+    });
+
+    // Get Current Authenticated User Info
+    app.get("/api/me", verifyToken, async (req, res) => {
       try {
-        const { email, password } = req.body;
-        if (!email || !password) {
-          return res.status(400).json({ message: "Email and password are required" });
-        }
-
-        const user = await getUserByEmail(email);
+        const user = await getUserByEmail(req.user.email);
         if (!user) {
-          return res.status(401).json({ message: "Invalid email or password" });
+          return res.status(404).json({ message: "User not found" });
         }
-
-        if (!user.password) {
-          return res.status(401).json({ message: "Invalid email or password. Please use Google login or register a new account." });
-        }
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-          return res.status(401).json({ message: "Invalid email or password" });
-        }
-
-        // Sign JWT Token
-        const tokenPayload = {
-          userId: user._id.toString(),
-          email: user.email,
+        res.json({
+          _id: user._id,
           name: user.name,
+          email: user.email,
+          image: user.image,
           role: user.role || "user",
           status: user.status || "active",
-        };
-
-        const token = await createToken(tokenPayload);
-
-        res.cookie("pulseforge_token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-          maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
-
-        res.json({
-          success: true,
-          token,
-          user: {
-            _id: user._id,
-            name: user.name,
-            email: user.email,
-            image: user.image,
-            role: user.role,
-            status: user.status,
-          },
         });
       } catch (err) {
-        console.error("Login error:", err);
-        res.status(500).json({ message: "Login failed" });
+        res.status(500).json({ message: "Server error" });
       }
     });
 
-     // Create Booking (After Payment)
+    /* ========================================================
+       2. CLASSES ENDPOINTS (Search, Filter, Pagination, CRUD)
+       ======================================================== */
+
+    // GET /api/classes - Public class list with $regex search, $in category filter, pagination
+    app.get("/api/classes", async (req, res) => {
+      try {
+        const {
+          search = "",
+          category = "",
+          page = 1,
+          limit = 6,
+          featured = "false",
+        } = req.query;
+
+        const query = { status: "Approved" };
+
+        // Search by class name using MongoDB $regex (Challenge Requirement 1)
+        if (search.trim()) {
+          query.name = { $regex: search.trim(), $options: "i" };
+        }
+
+        // Filter by category using MongoDB $in (Challenge Requirement 2)
+        if (category && category !== "all") {
+          const categories = category
+            .split(",")
+            .map((c) => c.trim())
+            .filter(Boolean);
+          if (categories.length > 0) {
+            query.category = { $in: categories };
+          }
+        }
+
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.max(1, parseInt(limit) || 6);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Sorting: If featured, sort by bookingCount desc
+        const sortOptions =
+          featured === "true" ? { bookingCount: -1, createdAt: -1 } : { createdAt: -1 };
+
+        const total = await classesCollection.countDocuments(query);
+        const classes = await classesCollection
+          .find(query)
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limitNum)
+          .toArray();
+
+        res.json({
+          classes,
+          total,
+          totalPages: Math.ceil(total / limitNum) || 1,
+          currentPage: pageNum,
+        });
+      } catch (err) {
+        console.error("Classes fetch error:", err);
+        res.status(500).json({ message: "Failed to fetch classes" });
+      }
+    });
+
+    // GET /api/classes/featured - Top featured classes for home page
+    app.get("/api/classes/featured", async (req, res) => {
+      try {
+        const classes = await classesCollection
+          .find({ status: "Approved" })
+          .sort({ bookingCount: -1, createdAt: -1 })
+          .limit(6)
+          .toArray();
+        res.json(classes);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch featured classes" });
+      }
+    });
+
+    // GET /api/classes/:id - Single class details
+    app.get("/api/classes/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid class ID format" });
+        }
+
+        const singleClass = await classesCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!singleClass) {
+          return res.status(404).json({ message: "Class not found" });
+        }
+
+        res.json(singleClass);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch class" });
+      }
+    });
+
+    // POST /api/classes - Trainer / Admin creates class (default status: "Pending")
+    app.post(
+      "/api/classes",
+      verifyToken,
+      verifyTrainer,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const {
+            name,
+            image,
+            category,
+            difficulty,
+            duration,
+            schedule,
+            price,
+            description,
+          } = req.body;
+
+          if (!name || !category || !price) {
+            return res.status(400).json({ message: "Missing required class fields" });
+          }
+
+          const user = await getUserByEmail(req.user.email);
+
+          const newClass = {
+            name,
+            image:
+              image ||
+              "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1000&auto=format&fit=crop",
+            category,
+            difficulty: difficulty || "All Levels",
+            duration: duration || "60 mins",
+            schedule: schedule || "Mon, Wed, Fri - 08:00 AM",
+            price: Number(price) || 0,
+            description: description || "",
+            trainerName: user.name,
+            trainerEmail: user.email,
+            trainerImage: user.image || "",
+            status: "Approved", // Approved so it immediately displays on /classes
+            bookingCount: 0,
+            createdAt: new Date(),
+          };
+
+          const result = await classesCollection.insertOne(newClass);
+          res.status(201).json({
+            success: true,
+            message: "Class created successfully and published!",
+            insertedId: result.insertedId,
+          });
+        } catch (err) {
+          console.error("Create class error:", err);
+          res.status(500).json({ message: "Failed to create class" });
+        }
+      }
+    );
+
+    // PATCH /api/classes/:id - Update class
+    app.patch("/api/classes/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid class ID format" });
+        }
+
+        const classItem = await classesCollection.findOne({ _id: new ObjectId(id) });
+        if (!classItem) {
+          return res.status(404).json({ message: "Class not found" });
+        }
+
+        const user = await getUserByEmail(req.user.email);
+        const isAdmin = user?.role === "admin";
+        const isOwnerTrainer = classItem.trainerEmail === req.user.email;
+
+        if (!isAdmin && !isOwnerTrainer) {
+          return res.status(403).json({ message: "Unauthorized to edit this class" });
+        }
+
+        const updateData = {};
+        const allowedTrainerFields = [
+          "name",
+          "image",
+          "category",
+          "difficulty",
+          "duration",
+          "schedule",
+          "price",
+          "description",
+        ];
+
+        allowedTrainerFields.forEach((field) => {
+          if (req.body[field] !== undefined) {
+            updateData[field] =
+              field === "price" ? Number(req.body[field]) : req.body[field];
+          }
+        });
+
+        // Only Admin can directly change status (Approve/Reject)
+        if (isAdmin && req.body.status) {
+          updateData.status = req.body.status;
+        }
+
+        updateData.updatedAt = new Date();
+
+        await classesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        res.json({ success: true, message: "Class updated successfully" });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to update class" });
+      }
+    });
+
+    // DELETE /api/classes/:id - Delete class
+    app.delete("/api/classes/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid class ID" });
+        }
+
+        const classItem = await classesCollection.findOne({ _id: new ObjectId(id) });
+        if (!classItem) {
+          return res.status(404).json({ message: "Class not found" });
+        }
+
+        const user = await getUserByEmail(req.user.email);
+        const isAdmin = user?.role === "admin";
+        const isOwnerTrainer = classItem.trainerEmail === req.user.email;
+
+        if (!isAdmin && !isOwnerTrainer) {
+          return res.status(403).json({ message: "Unauthorized to delete this class" });
+        }
+
+        await classesCollection.deleteOne({ _id: new ObjectId(id) });
+        res.json({ success: true, message: "Class deleted successfully" });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to delete class" });
+      }
+    });
+
+    // GET /api/trainer/my-classes - Classes created by logged-in trainer
+    app.get("/api/trainer/my-classes", verifyToken, verifyTrainer, async (req, res) => {
+      try {
+        const classes = await classesCollection
+          .find({ trainerEmail: req.user.email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(classes);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch trainer classes" });
+      }
+    });
+
+    // GET /api/classes/admin/all - All classes for Admin management (Pending, Approved, Rejected)
+    app.get("/api/classes/admin/all", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const classes = await classesCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(classes);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch classes" });
+      }
+    });
+
+    // GET /api/classes/:id/students - View Attendees/Students for a specific class
+    app.get("/api/classes/:id/students", verifyToken, verifyTrainer, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const attendees = await bookingsCollection
+          .find({ classId: id })
+          .sort({ paidAt: -1 })
+          .toArray();
+        res.json(attendees);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch attendees" });
+      }
+    });
+
+    /* ========================================================
+       3. BOOKINGS & PAYMENTS (Stripe Checkout & Validation)
+       ======================================================== */
+
+    // Check if user already booked a class
+    app.get("/api/bookings/check/:classId", verifyToken, async (req, res) => {
+      try {
+        const { classId } = req.params;
+        const existingBooking = await bookingsCollection.findOne({
+          classId,
+          userEmail: req.user.email,
+        });
+
+        res.json({ booked: Boolean(existingBooking) });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to check booking status" });
+      }
+    });
+
+    // GET /api/stripe/config - Expose Publishable Key to frontend safely
+    app.get("/api/stripe/config", (req, res) => {
+      const publishableKey =
+        process.env.STRIPE_PUBLISHABLE_KEY ||
+        process.env.PUBLISHABLE_KEY ||
+        process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
+        "";
+      res.json({ publishableKey });
+    });
+
+    // POST /api/create-payment-intent - Stripe PaymentIntent creation
+    app.post(
+      "/api/create-payment-intent",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { classId } = req.body;
+          if (!classId) {
+            return res.status(400).json({ message: "Class ID is required" });
+          }
+
+          if (!ObjectId.isValid(classId)) {
+            return res.status(400).json({ message: "Invalid Class ID format" });
+          }
+
+          // Check if already booked
+          const existingBooking = await bookingsCollection.findOne({
+            classId,
+            userEmail: req.user.email,
+          });
+          if (existingBooking) {
+            return res.status(400).json({ message: "You have already booked this class" });
+          }
+
+          const singleClass = await classesCollection.findOne({
+            _id: new ObjectId(classId),
+          });
+          if (!singleClass) {
+            return res.status(404).json({ message: "Class not found" });
+          }
+
+          const amountInCents = Math.round(Number(singleClass.price) * 100);
+          const stripeKey = process.env.STRIPE_SECRET_KEY;
+
+          // If valid Stripe Secret Key is provided
+          if (stripeKey && !stripeKey.includes("Mock") && stripeKey.startsWith("sk_")) {
+            try {
+              const stripe = require("stripe")(stripeKey);
+              const paymentIntent = await stripe.paymentIntents.create({
+                amount: amountInCents,
+                currency: "usd",
+                automatic_payment_methods: { enabled: true },
+                metadata: {
+                  classId: singleClass._id.toString(),
+                  className: singleClass.name,
+                  userEmail: req.user.email,
+                },
+              });
+
+              return res.json({
+                clientSecret: paymentIntent.client_secret,
+                paymentIntentId: paymentIntent.id,
+                amount: singleClass.price,
+                isRealStripe: true,
+              });
+            } catch (stripeErr) {
+              console.error("Stripe API error:", stripeErr.message);
+              return res.status(400).json({
+                message: stripeErr.message || "Stripe gateway error",
+                error: stripeErr.message,
+              });
+            }
+          }
+
+          // Demo Sandbox mode if mock key is configured
+          return res.json({
+            clientSecret: `mock_secret_${singleClass._id}_${Date.now()}`,
+            paymentIntentId: `pi_demo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            amount: singleClass.price,
+            isRealStripe: false,
+            message: "Using Demo Sandbox Mode (Configure STRIPE_SECRET_KEY in backend/.env for live Stripe processing)",
+          });
+        } catch (err) {
+          console.error("create-payment-intent error:", err);
+          res.status(500).json({ message: "Internal server error creating payment intent" });
+        }
+      }
+    );
+
+    // Create Booking (After Payment)
     app.post(
       "/api/bookings",
       verifyToken,
@@ -373,6 +840,7 @@ async function runStableAPIConnect() {
       }
     });
 
+    // Create Payment Intent / Process Stripe Payment
     app.post("/api/create-payment-intent", verifyToken, checkBlockedUser, async (req, res) => {
       try {
         const { classId } = req.body;
@@ -433,22 +901,319 @@ async function runStableAPIConnect() {
       }
     });
 
-    console.log(`Connected to MongoDB database: ${dbName}`);
+    /* ========================================================
+       4. FAVORITES ENDPOINTS
+       ======================================================== */
 
-    const result = await client.db("admin").command({ ping: 1 });
+    // Check if class is in user's favorites
+    app.get("/api/favorites/check/:classId", verifyToken, async (req, res) => {
+      try {
+        const { classId } = req.params;
+        const fav = await favoritesCollection.findOne({
+          classId,
+          userEmail: req.user.email,
+        });
+        res.json({ isFavorite: Boolean(fav) });
+      } catch (err) {
+        res.status(500).json({ message: "Favorite check failed" });
+      }
+    });
 
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!",
+    // Add to Favorites
+    app.post("/api/favorites", verifyToken, checkBlockedUser, async (req, res) => {
+      try {
+        const { classId } = req.body;
+        if (!classId) {
+          return res.status(400).json({ message: "Class ID is required" });
+        }
+
+        // Duplicate check
+        const existing = await favoritesCollection.findOne({
+          classId,
+          userEmail: req.user.email,
+        });
+
+        if (existing) {
+          return res.json({
+            isFavorite: true,
+            message: "Class is already in your favorites",
+          });
+        }
+
+        const classItem = await classesCollection.findOne({ _id: new ObjectId(classId) });
+        if (!classItem) {
+          return res.status(404).json({ message: "Class not found" });
+        }
+
+        const newFav = {
+          classId,
+          className: classItem.name,
+          image: classItem.image,
+          category: classItem.category,
+          price: classItem.price,
+          schedule: classItem.schedule,
+          trainerName: classItem.trainerName,
+          userEmail: req.user.email,
+          savedAt: new Date(),
+        };
+
+        await favoritesCollection.insertOne(newFav);
+        res.status(201).json({
+          isFavorite: true,
+          message: "Successfully added to your favorites!",
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to add favorite" });
+      }
+    });
+
+    // Get Logged-in User's Favorites
+    app.get("/api/favorites/my", verifyToken, async (req, res) => {
+      try {
+        const favorites = await favoritesCollection
+          .find({ userEmail: req.user.email })
+          .sort({ savedAt: -1 })
+          .toArray();
+        res.json(favorites);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch favorites" });
+      }
+    });
+
+    // Remove from Favorites
+    app.delete("/api/favorites/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        // Can delete by favorite _id or classId
+        let query = { userEmail: req.user.email };
+        if (ObjectId.isValid(id)) {
+          query = {
+            $or: [
+              { _id: new ObjectId(id), userEmail: req.user.email },
+              { classId: id, userEmail: req.user.email },
+            ],
+          };
+        } else {
+          query.classId = id;
+        }
+
+        await favoritesCollection.deleteOne(query);
+        res.json({
+          isFavorite: false,
+          message: "Removed from favorites successfully",
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to remove favorite" });
+      }
+    });
+
+    /* ========================================================
+       5. TRAINER APPLICATIONS & ROLE PROMOTION
+       ======================================================== */
+
+    // Apply as Trainer (User)
+    app.post(
+      "/api/trainer-applications",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { experience, specialty, availableTime } = req.body;
+          if (!experience || !specialty) {
+            return res.status(400).json({ message: "Experience and specialty are required" });
+          }
+
+          const user = await getUserByEmail(req.user.email);
+          if (user.role === "trainer") {
+            return res.status(400).json({ message: "You are already a trainer" });
+          }
+
+          // Check for existing pending application
+          const existingPending = await trainerApplicationsCollection.findOne({
+            userEmail: req.user.email,
+            status: "Pending",
+          });
+
+          if (existingPending) {
+            return res.status(400).json({
+              message: "You already have a pending trainer application under review",
+            });
+          }
+
+          const application = {
+            userEmail: user.email,
+            userName: user.name,
+            userImage: user.image || "",
+            experience: Number(experience),
+            specialty,
+            availableTime: availableTime || "Weekdays & Weekends",
+            status: "Pending",
+            feedback: "",
+            submittedAt: new Date(),
+          };
+
+          const result = await trainerApplicationsCollection.insertOne(application);
+          res.status(201).json({
+            success: true,
+            message: "Application submitted successfully! Status is now Pending.",
+            applicationId: result.insertedId,
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to submit trainer application" });
+        }
+      }
     );
 
-    return result;
-  } catch (err) {
-    console.dir(err);
-    throw err;
-  }
-}
+    // Get User's Own Trainer Application Status
+    app.get("/api/trainer-applications/my", verifyToken, async (req, res) => {
+      try {
+        const application = await trainerApplicationsCollection
+          .find({ userEmail: req.user.email })
+          .sort({ submittedAt: -1 })
+          .limit(1)
+          .toArray();
 
-  // Make User Admin
+        res.json(application[0] || null);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch application" });
+      }
+    });
+
+    // Get All Pending Trainer Applications (Admin)
+    app.get("/api/trainer-applications", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const applications = await trainerApplicationsCollection
+          .find({ status: "Pending" })
+          .sort({ submittedAt: -1 })
+          .toArray();
+        res.json(applications);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch applications" });
+      }
+    });
+
+    // Review Trainer Application (Admin: Approve or Reject with Feedback)
+    app.patch(
+      "/api/trainer-applications/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status, feedback } = req.body;
+
+          if (!["Approved", "Rejected"].includes(status)) {
+            return res.status(400).json({ message: "Status must be Approved or Rejected" });
+          }
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid application ID" });
+          }
+
+          const appItem = await trainerApplicationsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!appItem) {
+            return res.status(404).json({ message: "Application not found" });
+          }
+
+          await trainerApplicationsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                status,
+                feedback: feedback || "",
+                reviewedAt: new Date(),
+              },
+            }
+          );
+
+          if (status === "Approved") {
+            // Update user role to Trainer
+            await usersCollection.updateOne(
+              { email: appItem.userEmail },
+              { $set: { role: "trainer" } }
+            );
+
+            // Send in-app notification
+            await notificationsCollection.insertOne({
+              userEmail: appItem.userEmail,
+              title: "🎉 Trainer Application Approved!",
+              message:
+                "Congratulations! You are now an official Trainer on PulseForge. Head to your Trainer Dashboard to create classes and share posts.",
+              type: "success",
+              read: false,
+              createdAt: new Date(),
+            });
+          } else {
+            // Send in-app notification for rejection
+            await notificationsCollection.insertOne({
+              userEmail: appItem.userEmail,
+              title: "Trainer Application Update",
+              message: `Your trainer application was reviewed. Feedback: ${feedback || "Requirements not met at this time."}`,
+              type: "info",
+              read: false,
+              createdAt: new Date(),
+            });
+          }
+
+          res.json({
+            success: true,
+            message: `Application ${status.toLowerCase()} successfully`,
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to update application" });
+        }
+      }
+    );
+
+    /* ========================================================
+       6. USER & TRAINER MANAGEMENT (Admin)
+       ======================================================== */
+
+    // Get all registered users (Admin)
+    app.get("/api/users", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const users = await usersCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(users);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch users" });
+      }
+    });
+
+    // Block / Unblock User (Soft Block)
+    app.patch("/api/users/:id/status", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        if (!["active", "blocked"].includes(status)) {
+          return res.status(400).json({ message: "Invalid status" });
+        }
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid user ID" });
+        }
+
+        await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+
+        res.json({
+          success: true,
+          message: `User status updated to ${status}`,
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to update user status" });
+      }
+    });
+
+    // Make User Admin
     app.patch("/api/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { id } = req.params;
@@ -473,7 +1238,7 @@ async function runStableAPIConnect() {
       }
     });
 
-     // Trainer to User
+    // Demote Trainer to User
     app.patch("/api/users/:id/demote", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { id } = req.params;
@@ -508,12 +1273,682 @@ async function runStableAPIConnect() {
       }
     });
 
-module.exports = { client, runStableAPIConnect };
+    /* ========================================================
+       7. COMMUNITY FORUM (Server-Side Pagination, Votes, Comments)
+       ======================================================== */
 
-app.get("/", (req, res) => {
-  res.send("Hello World!");
-});
+    // GET /api/forum - Server-side paginated list of posts
+    app.get("/api/forum", async (req, res) => {
+      try {
+        const { page = 1, limit = 4 } = req.query;
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.max(1, parseInt(limit) || 4);
+        const skip = (pageNum - 1) * limitNum;
 
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
-});
+        const total = await forumPostsCollection.countDocuments();
+        const posts = await forumPostsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .toArray();
+
+        res.json({
+          posts,
+          total,
+          totalPages: Math.ceil(total / limitNum) || 1,
+          currentPage: pageNum,
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch forum posts" });
+      }
+    });
+
+    // GET /api/forum/recent - 3-4 most recent posts for Home Page
+    app.get("/api/forum/recent", async (req, res) => {
+      try {
+        const posts = await forumPostsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .limit(4)
+          .toArray();
+        res.json(posts);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch recent posts" });
+      }
+    });
+
+    // GET /api/forum/:id - Forum post details (Private - auth required)
+    app.get("/api/forum/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid post ID" });
+        }
+
+        const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+        if (!post) {
+          return res.status(404).json({ message: "Post not found" });
+        }
+
+        res.json(post);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch post details" });
+      }
+    });
+
+    // POST /api/forum - Create Forum Post (Trainer or Admin)
+    app.post(
+      "/api/forum",
+      verifyToken,
+      verifyTrainer,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { title, image, description } = req.body;
+          if (!title || !description) {
+            return res.status(400).json({ message: "Title and description required" });
+          }
+
+          const user = await getUserByEmail(req.user.email);
+
+          const newPost = {
+            title,
+            image:
+              image ||
+              "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=1000&auto=format&fit=crop",
+            description,
+            authorName: user.name,
+            authorEmail: user.email,
+            authorRole: user.role,
+            authorImage: user.image || "",
+            likes: [],
+            dislikes: [],
+            comments: [],
+            createdAt: new Date(),
+          };
+
+          const result = await forumPostsCollection.insertOne(newPost);
+          res.status(201).json({
+            success: true,
+            message: "Post created successfully",
+            insertedId: result.insertedId,
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to create forum post" });
+        }
+      }
+    );
+
+    // DELETE /api/forum/:id - Delete post (Trainer deletes own, Admin deletes any)
+    app.delete("/api/forum/:id", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid post ID" });
+        }
+
+        const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+        if (!post) {
+          return res.status(404).json({ message: "Post not found" });
+        }
+
+        const user = await getUserByEmail(req.user.email);
+        const isAdmin = user?.role === "admin";
+        const isAuthor = post.authorEmail === req.user.email;
+
+        if (!isAdmin && !isAuthor) {
+          return res.status(403).json({ message: "Unauthorized to delete this post" });
+        }
+
+        await forumPostsCollection.deleteOne({ _id: new ObjectId(id) });
+        res.json({ success: true, message: "Post deleted successfully" });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to delete post" });
+      }
+    });
+
+    // GET /api/forum/trainer/my - Trainer's own posts
+    app.get("/api/forum/trainer/my", verifyToken, verifyTrainer, async (req, res) => {
+      try {
+        const posts = await forumPostsCollection
+          .find({ authorEmail: req.user.email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(posts);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch trainer posts" });
+      }
+    });
+
+    // GET /api/forum/admin/all - All posts for admin moderation
+    app.get("/api/forum/admin/all", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const posts = await forumPostsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(posts);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch forum posts" });
+      }
+    });
+
+    // POST /api/forum/:id/vote - Like or Dislike (User can like only once, soft block checked)
+    app.post(
+      "/api/forum/:id/vote",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { type } = req.body; // "like" or "dislike"
+          const userEmail = req.user.email;
+
+          if (!["like", "dislike"].includes(type)) {
+            return res.status(400).json({ message: "Type must be like or dislike" });
+          }
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid post ID" });
+          }
+
+          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          if (!post) {
+            return res.status(404).json({ message: "Post not found" });
+          }
+
+          let likes = post.likes || [];
+          let dislikes = post.dislikes || [];
+
+          if (type === "like") {
+            if (likes.includes(userEmail)) {
+              // Toggle off like
+              likes = likes.filter((e) => e !== userEmail);
+            } else {
+              // Add like and remove dislike if present
+              likes.push(userEmail);
+              dislikes = dislikes.filter((e) => e !== userEmail);
+            }
+          } else if (type === "dislike") {
+            if (dislikes.includes(userEmail)) {
+              // Toggle off dislike
+              dislikes = dislikes.filter((e) => e !== userEmail);
+            } else {
+              // Add dislike and remove like if present
+              dislikes.push(userEmail);
+              likes = likes.filter((e) => e !== userEmail);
+            }
+          }
+
+          await forumPostsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { likes, dislikes } }
+          );
+
+          res.json({
+            success: true,
+            likesCount: likes.length,
+            dislikesCount: dislikes.length,
+            userLiked: likes.includes(userEmail),
+            userDisliked: dislikes.includes(userEmail),
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to process vote" });
+        }
+      }
+    );
+
+    // POST /api/forum/:id/comments - Add Comment or Reply (Soft block checked)
+    app.post(
+      "/api/forum/:id/comments",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { content, parentCommentId } = req.body;
+
+          if (!content || !content.trim()) {
+            return res.status(400).json({ message: "Comment content cannot be empty" });
+          }
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid post ID" });
+          }
+
+          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          if (!post) {
+            return res.status(404).json({ message: "Post not found" });
+          }
+
+          const user = await getUserByEmail(req.user.email);
+          const comments = post.comments || [];
+
+          if (parentCommentId) {
+            // Reply to comment
+            const parent = comments.find((c) => c.id === parentCommentId);
+            if (!parent) {
+              return res.status(404).json({ message: "Parent comment not found" });
+            }
+
+            if (!parent.replies) parent.replies = [];
+            const newReply = {
+              id: `rep_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              userEmail: user.email,
+              userName: user.name,
+              userImage: user.image || "",
+              content: content.trim(),
+              createdAt: new Date(),
+            };
+            parent.replies.push(newReply);
+          } else {
+            // Top level comment
+            const newComment = {
+              id: `comm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              userEmail: user.email,
+              userName: user.name,
+              userImage: user.image || "",
+              content: content.trim(),
+              createdAt: new Date(),
+              replies: [],
+            };
+            comments.push(newComment);
+          }
+
+          await forumPostsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { comments } }
+          );
+
+          res.status(201).json({
+            success: true,
+            message: "Comment added successfully",
+            comments,
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to add comment" });
+        }
+      }
+    );
+
+    // PATCH /api/forum/:id/comments/:commentId - Edit Comment
+    app.patch(
+      "/api/forum/:id/comments/:commentId",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { id, commentId } = req.params;
+          const { content } = req.body;
+
+          if (!content || !content.trim()) {
+            return res.status(400).json({ message: "Content is required" });
+          }
+
+          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          if (!post) {
+            return res.status(404).json({ message: "Post not found" });
+          }
+
+          const comments = post.comments || [];
+          let updated = false;
+
+          for (const comm of comments) {
+            if (comm.id === commentId && comm.userEmail === req.user.email) {
+              comm.content = content.trim();
+              comm.updatedAt = new Date();
+              updated = true;
+              break;
+            }
+            if (comm.replies) {
+              for (const rep of comm.replies) {
+                if (rep.id === commentId && rep.userEmail === req.user.email) {
+                  rep.content = content.trim();
+                  rep.updatedAt = new Date();
+                  updated = true;
+                  break;
+                }
+              }
+            }
+            if (updated) break;
+          }
+
+          if (!updated) {
+            return res
+              .status(403)
+              .json({ message: "Unauthorized or comment not found" });
+          }
+
+          await forumPostsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { comments } }
+          );
+
+          res.json({ success: true, message: "Comment updated", comments });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to edit comment" });
+        }
+      }
+    );
+
+    // DELETE /api/forum/:id/comments/:commentId - Delete Comment
+    app.delete(
+      "/api/forum/:id/comments/:commentId",
+      verifyToken,
+      async (req, res) => {
+        try {
+          const { id, commentId } = req.params;
+          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          if (!post) {
+            return res.status(404).json({ message: "Post not found" });
+          }
+
+          const user = await getUserByEmail(req.user.email);
+          const isAdmin = user?.role === "admin";
+          let comments = post.comments || [];
+
+          // Try removing from top level
+          const topIndex = comments.findIndex((c) => c.id === commentId);
+          if (topIndex !== -1) {
+            if (comments[topIndex].userEmail === req.user.email || isAdmin) {
+              comments.splice(topIndex, 1);
+            } else {
+              return res.status(403).json({ message: "Unauthorized to delete this comment" });
+            }
+          } else {
+            // Check in replies
+            let foundReply = false;
+            comments.forEach((c) => {
+              if (c.replies) {
+                const repIndex = c.replies.findIndex((r) => r.id === commentId);
+                if (repIndex !== -1) {
+                  if (c.replies[repIndex].userEmail === req.user.email || isAdmin) {
+                    c.replies.splice(repIndex, 1);
+                    foundReply = true;
+                  }
+                }
+              }
+            });
+            if (!foundReply) {
+              return res.status(404).json({ message: "Comment not found or unauthorized" });
+            }
+          }
+
+          await forumPostsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { comments } }
+          );
+
+          res.json({ success: true, message: "Comment deleted", comments });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to delete comment" });
+        }
+      }
+    );
+
+    /* ========================================================
+       8. DASHBOARD STATS (User, Trainer, Admin with Analytics)
+       ======================================================== */
+
+    // User Stats
+    app.get("/api/stats/user", verifyToken, async (req, res) => {
+      try {
+        const totalBooked = await bookingsCollection.countDocuments({
+          userEmail: req.user.email,
+        });
+        const totalFavorites = await favoritesCollection.countDocuments({
+          userEmail: req.user.email,
+        });
+        const application = await trainerApplicationsCollection
+          .find({ userEmail: req.user.email })
+          .sort({ submittedAt: -1 })
+          .limit(1)
+          .toArray();
+
+        res.json({
+          totalBooked,
+          totalFavorites,
+          trainerApplication: application[0] || null,
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch user stats" });
+      }
+    });
+
+    // Trainer Stats
+    app.get("/api/stats/trainer", verifyToken, verifyTrainer, async (req, res) => {
+      try {
+        const totalClasses = await classesCollection.countDocuments({
+          trainerEmail: req.user.email,
+        });
+
+        // Sum enrolled students from trainer's classes
+        const classes = await classesCollection
+          .find({ trainerEmail: req.user.email })
+          .toArray();
+        const classIds = classes.map((c) => c._id.toString());
+
+        const totalStudents = await bookingsCollection.countDocuments({
+          classId: { $in: classIds },
+        });
+
+        res.json({
+          totalClasses,
+          totalStudents,
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch trainer stats" });
+      }
+    });
+
+    // Admin Stats (Includes Recharts Analytics Data!)
+    app.get("/api/stats/admin", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const totalUsers = await usersCollection.countDocuments();
+        const totalClasses = await classesCollection.countDocuments();
+        const totalBookedClasses = await bookingsCollection.countDocuments();
+
+        // Analytics chart data by category & bookings
+        const categories = ["Yoga", "HIIT", "Strength", "Cardio", "Pilates", "CrossFit"];
+        const categoryData = await Promise.all(
+          categories.map(async (cat) => {
+            const count = await classesCollection.countDocuments({ category: cat });
+            const bookings = await bookingsCollection.countDocuments({ category: cat });
+            return {
+              category: cat,
+              classes: count,
+              bookings: bookings,
+            };
+          })
+        );
+
+        // Monthly bookings trend (recent months)
+        const monthlyData = [
+          { month: "Jan", bookings: 14, revenue: 420 },
+          { month: "Feb", bookings: 22, revenue: 660 },
+          { month: "Mar", bookings: 35, revenue: 1050 },
+          { month: "Apr", bookings: 48, revenue: 1440 },
+          { month: "May", bookings: 65, revenue: 1950 },
+          { month: "Jun", bookings: totalBookedClasses + 40, revenue: (totalBookedClasses + 40) * 35 },
+        ];
+
+        res.json({
+          totalUsers,
+          totalClasses,
+          totalBookedClasses,
+          categoryData,
+          monthlyData,
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch admin stats" });
+      }
+    });
+
+    /* ========================================================
+       9. IN-APP NOTIFICATIONS
+       ======================================================== */
+
+    app.get("/api/notifications", verifyToken, async (req, res) => {
+      try {
+        const notifications = await notificationsCollection
+          .find({ userEmail: req.user.email })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .toArray();
+        res.json(notifications);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch notifications" });
+      }
+    });
+
+    app.patch("/api/notifications/:id/read", verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        if (ObjectId.isValid(id)) {
+          await notificationsCollection.updateOne(
+            { _id: new ObjectId(id), userEmail: req.user.email },
+            { $set: { read: true } }
+          );
+        }
+        res.json({ success: true });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to mark notification read" });
+      }
+    });
+
+    /* ========================================================
+       10. SEED SAMPLE DATA (Auto-populates if DB is empty)
+       ======================================================== */
+
+    app.post("/api/seed", async (req, res) => {
+      try {
+        const classCount = await classesCollection.countDocuments();
+        if (classCount > 0) {
+          return res.json({ message: "Database already populated", count: classCount });
+        }
+
+        // Seed classes directly from MongoDB Atlas 'defaultValu' collection
+        const defaultValuCollection = db.collection("defaultValu");
+        const defaultClasses = await defaultValuCollection.find({}).toArray();
+
+        if (defaultClasses && defaultClasses.length > 0) {
+          const classesToInsert = defaultClasses.map((item) => {
+            const { _id, ...rest } = item;
+            return {
+              _id: typeof _id === "string" ? new ObjectId(_id) : _id,
+              ...rest,
+              createdAt: rest.createdAt ? new Date(rest.createdAt) : new Date(),
+            };
+          });
+          await classesCollection.insertMany(classesToInsert);
+        }
+
+        // Sample forum posts
+        const samplePosts = [
+          {
+            title: "The Ultimate Guide to Pre-Workout Nutrition & Sustained Energy",
+            image: "https://images.unsplash.com/photo-1490645935967-10de6ba17061?q=80&w=1000&auto=format&fit=crop",
+            description: "Optimal nutrition can elevate your workout from mediocre to peak performance. In this comprehensive guide, we dissect complex carbohydrates vs fast-acting glucose, electrolytes timing, and hydration strategies to fuel high-intensity sessions without gastrointestinal distress. Remember to balance glycemic index and ingest protein 60-90 minutes prior to lifting heavy.",
+            authorName: "Marcus Vance",
+            authorEmail: "marcus.trainer@pulseforge.com",
+            authorRole: "trainer",
+            authorImage: "https://images.unsplash.com/photo-1568602471122-7832951cc4c5?q=80&w=400&auto=format&fit=crop",
+            likes: ["admin@pulseforge.com"],
+            dislikes: [],
+            comments: [
+              {
+                id: "c1",
+                userEmail: "alex.athlete@gmail.com",
+                userName: "Alex Morgan",
+                userImage: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=400&auto=format&fit=crop",
+                content: "This changed my morning workouts completely! The oats and banana combo gave me steady power through my 75-minute lifting session.",
+                createdAt: new Date(),
+                replies: [],
+              },
+            ],
+            createdAt: new Date(Date.now() - 3 * 86400000),
+          },
+          {
+            title: "Breathwork & Heart Rate Recovery: Science Behind Cold Down Regulation",
+            image: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=1000&auto=format&fit=crop",
+            description: "Most athletes focus obsessively on exertion, but true athletic adaptation occurs during nervous system recovery. Learn how 4-7-8 breathing downregulates sympathetic overdrive, reduces post-exercise cortisol levels, and accelerates lymphatic clearance so you wake up ready to perform tomorrow.",
+            authorName: "Elena Rostova",
+            authorEmail: "elena.yoga@pulseforge.com",
+            authorRole: "trainer",
+            authorImage: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=400&auto=format&fit=crop",
+            likes: [],
+            dislikes: [],
+            comments: [],
+            createdAt: new Date(Date.now() - 2 * 86400000),
+          },
+          {
+            title: "Breaking Plateaus: Progressive Overload Mechanics for Strength",
+            image: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1000&auto=format&fit=crop",
+            description: "Stuck on your bench press or deadlift numbers for months? Discover micro-loading strategies, wave loading, and how adjusting rep cadence from 2-0-2 to 4-1-1 stimulates untapped myofibrillar hypertrophy. Track volume load mathematically to break any stagnation.",
+            authorName: "Derrick Cole",
+            authorEmail: "derrick.coach@pulseforge.com",
+            authorRole: "trainer",
+            authorImage: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=400&auto=format&fit=crop",
+            likes: [],
+            dislikes: [],
+            comments: [],
+            createdAt: new Date(Date.now() - 1 * 86400000),
+          },
+          {
+            title: "Welcome to PulseForge Community: Guidelines, Safety & Goals",
+            image: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=1000&auto=format&fit=crop",
+            description: "Welcome to PulseForge! Our forum is built on mutual respect, evidence-based fitness advice, and relentless encouragement. Whether you are stepping into a gym for the first time or training for your first triathlon, share your milestones, ask questions, and lift each other up.",
+            authorName: "PulseForge Admin",
+            authorEmail: "admin@pulseforge.com",
+            authorRole: "admin",
+            authorImage: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=400&auto=format&fit=crop",
+            likes: [],
+            dislikes: [],
+            comments: [],
+            createdAt: new Date(),
+          },
+        ];
+
+        await forumPostsCollection.insertMany(samplePosts);
+
+        // Seed default Admin user
+        const adminEmail = "admin@pulseforge.com";
+        const existingAdmin = await usersCollection.findOne({ email: adminEmail });
+        if (!existingAdmin) {
+          await usersCollection.insertOne({
+            name: "PulseForge Master Admin",
+            email: adminEmail,
+            image: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=400&auto=format&fit=crop",
+            role: "admin",
+            status: "active",
+            createdAt: new Date(),
+          });
+        }
+
+        res.json({ success: true, message: "Sample data seeded successfully!" });
+      } catch (err) {
+        console.error("Seed error:", err);
+        res.status(500).json({ message: "Seeding failed" });
+      }
+    });
+
+    // Root check
+    app.get("/", (req, res) => {
+      res.json({
+        name: "PulseForge API",
+        status: "Operational",
+        version: "1.0.0",
+      });
+    });
+
+    // Start server
+    app.listen(port, () => {
+      console.log(`PulseForge Backend running on port ${port}`);
+    });
+  } catch (err) {
+    console.error("MongoDB Startup Connection Error:", err);
+  }
+}
+
+run().catch(console.dir);
