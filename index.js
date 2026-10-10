@@ -34,6 +34,77 @@ async function runStableAPIConnect() {
     const forumPostsCollection = db.collection("forum_posts");
     const notificationsCollection = db.collection("notifications");
 
+
+    app.get("/api/classes", async (req, res) => {
+      try {
+        const {
+          search = "",
+          category = "",
+          page = 1,
+          limit = 6,
+          featured = "false",
+        } = req.query;
+
+        const query = { status: "Approved" };
+
+        // Search by class name using MongoDB $regex (Challenge Requirement 1)
+        if (search.trim()) {
+          query.name = { $regex: search.trim(), $options: "i" };
+        }
+
+        // Filter by category using MongoDB $in (Challenge Requirement 2)
+        if (category && category !== "all") {
+          const categories = category
+            .split(",")
+            .map((c) => c.trim())
+            .filter(Boolean);
+          if (categories.length > 0) {
+            query.category = { $in: categories };
+          }
+        }
+
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.max(1, parseInt(limit) || 6);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Sorting: If featured, sort by bookingCount desc
+        const sortOptions =
+          featured === "true" ? { bookingCount: -1, createdAt: -1 } : { createdAt: -1 };
+
+        const total = await classesCollection.countDocuments(query);
+        const classes = await classesCollection
+          .find(query)
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limitNum)
+          .toArray();
+
+        res.json({
+          classes,
+          total,
+          totalPages: Math.ceil(total / limitNum) || 1,
+          currentPage: pageNum,
+        });
+      } catch (err) {
+        console.error("Classes fetch error:", err);
+        res.status(500).json({ message: "Failed to fetch classes" });
+      }
+    });
+
+
+     app.get("/api/classes/featured", async (req, res) => {
+      try {
+        const classes = await classesCollection
+          .find({ status: "Approved" })
+          .sort({ bookingCount: -1, createdAt: -1 })
+          .limit(6)
+          .toArray();
+        res.json(classes);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch featured classes" });
+      }
+    });
+
     console.log(`Connected to MongoDB database: ${dbName}`);
 
     const result = await client.db("admin").command({ ping: 1 });
