@@ -260,6 +260,116 @@ async function runStableAPIConnect() {
       }
     });
 
+     // Create Booking (After Payment)
+    app.post(
+      "/api/bookings",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { classId, transactionId } = req.body;
+          if (!classId) {
+            return res.status(400).json({ message: "Class ID is required" });
+          }
+
+          // Crucial validation: Check if user already booked this class
+          const existingBooking = await bookingsCollection.findOne({
+            classId,
+            userEmail: req.user.email,
+          });
+
+          if (existingBooking) {
+            return res.status(400).json({
+              message: "You have already booked this class",
+            });
+          }
+
+          // Find class
+          const singleClass = await classesCollection.findOne({
+            _id: new ObjectId(classId),
+          });
+          if (!singleClass) {
+            return res.status(404).json({ message: "Class not found" });
+          }
+
+          let user = await getUserByEmail(req.user.email);
+          if (!user) {
+            user = {
+              name: req.user.name || "Member",
+              email: req.user.email,
+              image: req.user.image || "",
+              role: req.user.role || "user",
+              status: "active",
+              createdAt: new Date(),
+            };
+            try {
+              await usersCollection.insertOne(user);
+            } catch (e) {}
+          }
+
+          const bookingDoc = {
+            classId,
+            className: singleClass.name,
+            trainerName: singleClass.trainerName,
+            trainerEmail: singleClass.trainerEmail,
+            userEmail: user.email || req.user.email,
+            userName: user.name || req.user.name || "Member",
+            userImage: user.image || req.user.image || "",
+            price: singleClass.price,
+            schedule: singleClass.schedule,
+            category: singleClass.category,
+            transactionId: transactionId || `tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            paidAt: new Date(),
+            status: "confirmed",
+          };
+
+          const result = await bookingsCollection.insertOne(bookingDoc);
+
+          // Increment class bookingCount
+          await classesCollection.updateOne(
+            { _id: new ObjectId(classId) },
+            { $inc: { bookingCount: 1 } }
+          );
+
+          res.status(201).json({
+            success: true,
+            message: "Class booked successfully!",
+            bookingId: result.insertedId,
+            transactionId: bookingDoc.transactionId,
+          });
+        } catch (err) {
+          console.error("Booking error:", err);
+          res.status(500).json({ message: "Failed to complete booking" });
+        }
+      }
+    );
+
+    // Get Logged-in User's Booked Classes
+    app.get("/api/bookings/my", verifyToken, async (req, res) => {
+      try {
+        const bookings = await bookingsCollection
+          .find({ userEmail: req.user.email })
+          .sort({ paidAt: -1 })
+          .toArray();
+        res.json(bookings);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch bookings" });
+      }
+    });
+
+    // Get All Platform Transactions (Admin Read-Only)
+    app.get("/api/bookings/all", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const transactions = await bookingsCollection
+          .find()
+          .sort({ paidAt: -1 })
+          .toArray();
+        res.json(transactions);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to fetch transactions" });
+      }
+    });
+
     console.log(`Connected to MongoDB database: ${dbName}`);
 
     const result = await client.db("admin").command({ ping: 1 });
