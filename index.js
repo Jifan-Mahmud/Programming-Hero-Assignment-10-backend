@@ -448,6 +448,31 @@ async function runStableAPIConnect() {
   }
 }
 
+  // Make User Admin
+    app.patch("/api/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { role } = req.body;
+
+        if (!["admin", "trainer", "user"].includes(role)) {
+          return res.status(400).json({ message: "Invalid role" });
+        }
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid user ID" });
+        }
+
+        await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role } }
+        );
+
+        res.json({ success: true, message: `User role promoted to ${role}` });
+      } catch (err) {
+        res.status(500).json({ message: "Failed to change user role" });
+      }
+    });
+
 module.exports = { client, runStableAPIConnect };
 
 app.get("/", (req, res) => {
