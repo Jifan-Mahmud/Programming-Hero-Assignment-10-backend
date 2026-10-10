@@ -202,6 +202,63 @@ async function runStableAPIConnect() {
         res.status(500).json({ message: "Registration failed" });
       }
     });
+    // Direct Login with email + password (for seeded and registered users)
+    app.post("/api/login", async (req, res) => {
+      try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+          return res.status(400).json({ message: "Email and password are required" });
+        }
+
+        const user = await getUserByEmail(email);
+        if (!user) {
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+
+        if (!user.password) {
+          return res.status(401).json({ message: "Invalid email or password. Please use Google login or register a new account." });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+
+        // Sign JWT Token
+        const tokenPayload = {
+          userId: user._id.toString(),
+          email: user.email,
+          name: user.name,
+          role: user.role || "user",
+          status: user.status || "active",
+        };
+
+        const token = await createToken(tokenPayload);
+
+        res.cookie("pulseforge_token", token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        res.json({
+          success: true,
+          token,
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            image: user.image,
+            role: user.role,
+            status: user.status,
+          },
+        });
+      } catch (err) {
+        console.error("Login error:", err);
+        res.status(500).json({ message: "Login failed" });
+      }
+    });
 
     console.log(`Connected to MongoDB database: ${dbName}`);
 
