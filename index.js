@@ -8,10 +8,10 @@ const { createToken, verifyToken, optionalToken } = require("./jwt");
 const bcrypt = require("bcrypt");
 
 const app = express();
-const port = process.env.PORT;
+const port = process.env.PORT || 5000;
 const uri = process.env.MONGODB_URI;
 const dbName = process.env.DB_NAME;
-const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3001";
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
 
 // Middlewares
 app.use(
@@ -1952,3 +1952,5 @@ async function run() {
 }
 
 run().catch(console.dir);
+
+module.exports = app;

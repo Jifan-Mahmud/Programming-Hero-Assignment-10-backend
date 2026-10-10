@@ -1,8 +1,6 @@
 const { SignJWT, jwtVerify } = require("jose-cjs");
 
-const secret = new TextEncoder().encode(
-  process.env.JWT_SECRET || "pulseforge_jwt_super_secret_key_milestone_10_2026"
-);
+const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 
 // Sign JWT token
 async function createToken(payload) {

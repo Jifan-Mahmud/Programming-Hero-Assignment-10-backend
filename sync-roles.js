@@ -2,7 +2,7 @@ require("dotenv").config();
 const { MongoClient } = require("mongodb");
 
 const uri = process.env.MONGODB_URI;
-const dbName = process.env.DB_NAME || "pulseforge_db";
+const dbName = process.env.DB_NAME;
 const client = new MongoClient(uri);
 
 async function run() {
