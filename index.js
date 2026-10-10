@@ -10,6 +10,9 @@ const uri = process.env.MONGODB_URI;
 app.use(cors());
 app.use(express.json());
 
+const dbName = process.env.DB_NAME;
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3001";
+
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
