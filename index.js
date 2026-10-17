@@ -28,7 +28,7 @@ app.use(
       return callback(null, true);
     },
     credentials: true,
-  })
+  }),
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -45,7 +45,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     const db = client.db(dbName);
 
     // Collections
@@ -86,7 +86,9 @@ async function run() {
       const email = req.user?.email;
       const user = await getUserByEmail(email);
       if (user?.role !== "admin") {
-        return res.status(403).json({ message: "Access forbidden: Admin only" });
+        return res
+          .status(403)
+          .json({ message: "Access forbidden: Admin only" });
       }
       next();
     };
@@ -133,7 +135,7 @@ async function run() {
           if ((name && user.name !== name) || (image && user.image !== image)) {
             await usersCollection.updateOne(
               { email },
-              { $set: { name: name || user.name, image: image || user.image } }
+              { $set: { name: name || user.name, image: image || user.image } },
             );
           }
         }
@@ -180,7 +182,9 @@ async function run() {
       try {
         const { email, password } = req.body;
         if (!email || !password) {
-          return res.status(400).json({ message: "Email and password are required" });
+          return res
+            .status(400)
+            .json({ message: "Email and password are required" });
         }
 
         const user = await getUserByEmail(email);
@@ -189,7 +193,10 @@ async function run() {
         }
 
         if (!user.password) {
-          return res.status(401).json({ message: "Invalid email or password. Please use Google login or register a new account." });
+          return res.status(401).json({
+            message:
+              "Invalid email or password. Please use Google login or register a new account.",
+          });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
@@ -238,24 +245,34 @@ async function run() {
       try {
         const { name, email, password, image, role } = req.body;
         if (!name || !email || !password) {
-          return res.status(400).json({ message: "Name, email, and password are required" });
+          return res
+            .status(400)
+            .json({ message: "Name, email, and password are required" });
         }
 
         // Password validation
         if (password.length < 6) {
-          return res.status(400).json({ message: "Password must be at least 6 characters" });
+          return res
+            .status(400)
+            .json({ message: "Password must be at least 6 characters" });
         }
         if (!/[A-Z]/.test(password)) {
-          return res.status(400).json({ message: "Password must include at least one uppercase letter" });
+          return res.status(400).json({
+            message: "Password must include at least one uppercase letter",
+          });
         }
         if (!/[a-z]/.test(password)) {
-          return res.status(400).json({ message: "Password must include at least one lowercase letter" });
+          return res.status(400).json({
+            message: "Password must include at least one lowercase letter",
+          });
         }
 
         // Check if user already exists
         const existing = await getUserByEmail(email);
         if (existing) {
-          return res.status(409).json({ message: "An account with this email already exists" });
+          return res
+            .status(409)
+            .json({ message: "An account with this email already exists" });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
@@ -266,7 +283,9 @@ async function run() {
           name,
           email,
           password: hashedPassword,
-          image: image || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=10b981&color=000`,
+          image:
+            image ||
+            `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=10b981&color=000`,
           role: allowedRole,
           status: "active",
           createdAt: new Date(),
@@ -380,7 +399,9 @@ async function run() {
 
         // Sorting: If featured, sort by bookingCount desc
         const sortOptions =
-          featured === "true" ? { bookingCount: -1, createdAt: -1 } : { createdAt: -1 };
+          featured === "true"
+            ? { bookingCount: -1, createdAt: -1 }
+            : { createdAt: -1 };
 
         const total = await classesCollection.countDocuments(query);
         const classes = await classesCollection
@@ -458,7 +479,9 @@ async function run() {
           } = req.body;
 
           if (!name || !category || !price) {
-            return res.status(400).json({ message: "Missing required class fields" });
+            return res
+              .status(400)
+              .json({ message: "Missing required class fields" });
           }
 
           const user = await getUserByEmail(req.user.email);
@@ -492,7 +515,7 @@ async function run() {
           console.error("Create class error:", err);
           res.status(500).json({ message: "Failed to create class" });
         }
-      }
+      },
     );
 
     // PATCH /api/classes/:id - Update class
@@ -503,7 +526,9 @@ async function run() {
           return res.status(400).json({ message: "Invalid class ID format" });
         }
 
-        const classItem = await classesCollection.findOne({ _id: new ObjectId(id) });
+        const classItem = await classesCollection.findOne({
+          _id: new ObjectId(id),
+        });
         if (!classItem) {
           return res.status(404).json({ message: "Class not found" });
         }
@@ -513,7 +538,9 @@ async function run() {
         const isOwnerTrainer = classItem.trainerEmail === req.user.email;
 
         if (!isAdmin && !isOwnerTrainer) {
-          return res.status(403).json({ message: "Unauthorized to edit this class" });
+          return res
+            .status(403)
+            .json({ message: "Unauthorized to edit this class" });
         }
 
         const updateData = {};
@@ -544,7 +571,7 @@ async function run() {
 
         await classesCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: updateData }
+          { $set: updateData },
         );
 
         res.json({ success: true, message: "Class updated successfully" });
@@ -561,7 +588,9 @@ async function run() {
           return res.status(400).json({ message: "Invalid class ID" });
         }
 
-        const classItem = await classesCollection.findOne({ _id: new ObjectId(id) });
+        const classItem = await classesCollection.findOne({
+          _id: new ObjectId(id),
+        });
         if (!classItem) {
           return res.status(404).json({ message: "Class not found" });
         }
@@ -571,7 +600,9 @@ async function run() {
         const isOwnerTrainer = classItem.trainerEmail === req.user.email;
 
         if (!isAdmin && !isOwnerTrainer) {
-          return res.status(403).json({ message: "Unauthorized to delete this class" });
+          return res
+            .status(403)
+            .json({ message: "Unauthorized to delete this class" });
         }
 
         await classesCollection.deleteOne({ _id: new ObjectId(id) });
@@ -582,44 +613,59 @@ async function run() {
     });
 
     // GET /api/trainer/my-classes - Classes created by logged-in trainer
-    app.get("/api/trainer/my-classes", verifyToken, verifyTrainer, async (req, res) => {
-      try {
-        const classes = await classesCollection
-          .find({ trainerEmail: req.user.email })
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.json(classes);
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch trainer classes" });
-      }
-    });
+    app.get(
+      "/api/trainer/my-classes",
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const classes = await classesCollection
+            .find({ trainerEmail: req.user.email })
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(classes);
+        } catch (err) {
+          res.status(500).json({ message: "Failed to fetch trainer classes" });
+        }
+      },
+    );
 
     // GET /api/classes/admin/all - All classes for Admin management (Pending, Approved, Rejected)
-    app.get("/api/classes/admin/all", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const classes = await classesCollection
-          .find()
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.json(classes);
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch classes" });
-      }
-    });
+    app.get(
+      "/api/classes/admin/all",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const classes = await classesCollection
+            .find()
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(classes);
+        } catch (err) {
+          res.status(500).json({ message: "Failed to fetch classes" });
+        }
+      },
+    );
 
     // GET /api/classes/:id/students - View Attendees/Students for a specific class
-    app.get("/api/classes/:id/students", verifyToken, verifyTrainer, async (req, res) => {
-      try {
-        const { id } = req.params;
-        const attendees = await bookingsCollection
-          .find({ classId: id })
-          .sort({ paidAt: -1 })
-          .toArray();
-        res.json(attendees);
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch attendees" });
-      }
-    });
+    app.get(
+      "/api/classes/:id/students",
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const attendees = await bookingsCollection
+            .find({ classId: id })
+            .sort({ paidAt: -1 })
+            .toArray();
+          res.json(attendees);
+        } catch (err) {
+          res.status(500).json({ message: "Failed to fetch attendees" });
+        }
+      },
+    );
 
     /* ========================================================
        3. BOOKINGS & PAYMENTS (Stripe Checkout & Validation)
@@ -672,7 +718,9 @@ async function run() {
             userEmail: req.user.email,
           });
           if (existingBooking) {
-            return res.status(400).json({ message: "You have already booked this class" });
+            return res
+              .status(400)
+              .json({ message: "You have already booked this class" });
           }
 
           const singleClass = await classesCollection.findOne({
@@ -686,7 +734,11 @@ async function run() {
           const stripeKey = process.env.STRIPE_SECRET_KEY;
 
           // If valid Stripe Secret Key is provided
-          if (stripeKey && !stripeKey.includes("Mock") && stripeKey.startsWith("sk_")) {
+          if (
+            stripeKey &&
+            !stripeKey.includes("Mock") &&
+            stripeKey.startsWith("sk_")
+          ) {
             try {
               const stripe = require("stripe")(stripeKey);
               const paymentIntent = await stripe.paymentIntents.create({
@@ -721,13 +773,16 @@ async function run() {
             paymentIntentId: `pi_demo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
             amount: singleClass.price,
             isRealStripe: false,
-            message: "Using Demo Sandbox Mode (Configure STRIPE_SECRET_KEY in backend/.env for live Stripe processing)",
+            message:
+              "Using Demo Sandbox Mode (Configure STRIPE_SECRET_KEY in backend/.env for live Stripe processing)",
           });
         } catch (err) {
           console.error("create-payment-intent error:", err);
-          res.status(500).json({ message: "Internal server error creating payment intent" });
+          res
+            .status(500)
+            .json({ message: "Internal server error creating payment intent" });
         }
-      }
+      },
     );
 
     // Create Booking (After Payment)
@@ -788,7 +843,9 @@ async function run() {
             price: singleClass.price,
             schedule: singleClass.schedule,
             category: singleClass.category,
-            transactionId: transactionId || `tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            transactionId:
+              transactionId ||
+              `tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
             paidAt: new Date(),
             status: "confirmed",
           };
@@ -798,7 +855,7 @@ async function run() {
           // Increment class bookingCount
           await classesCollection.updateOne(
             { _id: new ObjectId(classId) },
-            { $inc: { bookingCount: 1 } }
+            { $inc: { bookingCount: 1 } },
           );
 
           res.status(201).json({
@@ -811,7 +868,7 @@ async function run() {
           console.error("Booking error:", err);
           res.status(500).json({ message: "Failed to complete booking" });
         }
-      }
+      },
     );
 
     // Get Logged-in User's Booked Classes
@@ -841,65 +898,80 @@ async function run() {
     });
 
     // Create Payment Intent / Process Stripe Payment
-    app.post("/api/create-payment-intent", verifyToken, checkBlockedUser, async (req, res) => {
-      try {
-        const { classId } = req.body;
-        if (!classId) {
-          return res.status(400).json({ message: "Class ID required" });
-        }
-
-        // Check if already booked
-        const alreadyBooked = await bookingsCollection.findOne({
-          classId,
-          userEmail: req.user.email,
-        });
-
-        if (alreadyBooked) {
-          return res.status(400).json({ message: "You have already booked this class" });
-        }
-
-        const classItem = await classesCollection.findOne({ _id: new ObjectId(classId) });
-        if (!classItem) {
-          return res.status(404).json({ message: "Class not found" });
-        }
-
-        // Generate client secret for Stripe or mock client secret
-        const amount = Math.round(Number(classItem.price) * 100); // in cents
-
-        let clientSecret = "";
+    app.post(
+      "/api/create-payment-intent",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
         try {
-          if (process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.includes("Mock")) {
-            const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-            const paymentIntent = await stripe.paymentIntents.create({
-              amount: Math.max(100, amount),
-              currency: "usd",
-              payment_method_types: ["card"],
-              metadata: {
-                classId,
-                className: classItem.name,
-                userEmail: req.user.email,
-              },
-            });
-            clientSecret = paymentIntent.client_secret;
-          } else {
-            // Secure fallback test client_secret
+          const { classId } = req.body;
+          if (!classId) {
+            return res.status(400).json({ message: "Class ID required" });
+          }
+
+          // Check if already booked
+          const alreadyBooked = await bookingsCollection.findOne({
+            classId,
+            userEmail: req.user.email,
+          });
+
+          if (alreadyBooked) {
+            return res
+              .status(400)
+              .json({ message: "You have already booked this class" });
+          }
+
+          const classItem = await classesCollection.findOne({
+            _id: new ObjectId(classId),
+          });
+          if (!classItem) {
+            return res.status(404).json({ message: "Class not found" });
+          }
+
+          // Generate client secret for Stripe or mock client secret
+          const amount = Math.round(Number(classItem.price) * 100); // in cents
+
+          let clientSecret = "";
+          try {
+            if (
+              process.env.STRIPE_SECRET_KEY &&
+              !process.env.STRIPE_SECRET_KEY.includes("Mock")
+            ) {
+              const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+              const paymentIntent = await stripe.paymentIntents.create({
+                amount: Math.max(100, amount),
+                currency: "usd",
+                payment_method_types: ["card"],
+                metadata: {
+                  classId,
+                  className: classItem.name,
+                  userEmail: req.user.email,
+                },
+              });
+              clientSecret = paymentIntent.client_secret;
+            } else {
+              // Secure fallback test client_secret
+              clientSecret = `pi_mock_${Date.now()}_secret_${Math.random().toString(36).substring(2)}`;
+            }
+          } catch (stripeErr) {
+            console.warn(
+              "Stripe live init note, using fallback client secret:",
+              stripeErr.message,
+            );
             clientSecret = `pi_mock_${Date.now()}_secret_${Math.random().toString(36).substring(2)}`;
           }
-        } catch (stripeErr) {
-          console.warn("Stripe live init note, using fallback client secret:", stripeErr.message);
-          clientSecret = `pi_mock_${Date.now()}_secret_${Math.random().toString(36).substring(2)}`;
-        }
 
-        res.json({
-          clientSecret,
-          amount: classItem.price,
-          className: classItem.name,
-          trainerName: classItem.trainerName,
-        });
-      } catch (err) {
-        res.status(500).json({ message: "Payment setup error" });
-      }
-    });
+          res.json({
+            clientSecret,
+            amount: classItem.price,
+            className: classItem.name,
+            trainerName: classItem.trainerName,
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Payment setup error" });
+        }
+      },
+    );
 
     /* ========================================================
        4. FAVORITES ENDPOINTS
@@ -920,52 +992,59 @@ async function run() {
     });
 
     // Add to Favorites
-    app.post("/api/favorites", verifyToken, checkBlockedUser, async (req, res) => {
-      try {
-        const { classId } = req.body;
-        if (!classId) {
-          return res.status(400).json({ message: "Class ID is required" });
-        }
+    app.post(
+      "/api/favorites",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { classId } = req.body;
+          if (!classId) {
+            return res.status(400).json({ message: "Class ID is required" });
+          }
 
-        // Duplicate check
-        const existing = await favoritesCollection.findOne({
-          classId,
-          userEmail: req.user.email,
-        });
-
-        if (existing) {
-          return res.json({
-            isFavorite: true,
-            message: "Class is already in your favorites",
+          // Duplicate check
+          const existing = await favoritesCollection.findOne({
+            classId,
+            userEmail: req.user.email,
           });
+
+          if (existing) {
+            return res.json({
+              isFavorite: true,
+              message: "Class is already in your favorites",
+            });
+          }
+
+          const classItem = await classesCollection.findOne({
+            _id: new ObjectId(classId),
+          });
+          if (!classItem) {
+            return res.status(404).json({ message: "Class not found" });
+          }
+
+          const newFav = {
+            classId,
+            className: classItem.name,
+            image: classItem.image,
+            category: classItem.category,
+            price: classItem.price,
+            schedule: classItem.schedule,
+            trainerName: classItem.trainerName,
+            userEmail: req.user.email,
+            savedAt: new Date(),
+          };
+
+          await favoritesCollection.insertOne(newFav);
+          res.status(201).json({
+            isFavorite: true,
+            message: "Successfully added to your favorites!",
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to add favorite" });
         }
-
-        const classItem = await classesCollection.findOne({ _id: new ObjectId(classId) });
-        if (!classItem) {
-          return res.status(404).json({ message: "Class not found" });
-        }
-
-        const newFav = {
-          classId,
-          className: classItem.name,
-          image: classItem.image,
-          category: classItem.category,
-          price: classItem.price,
-          schedule: classItem.schedule,
-          trainerName: classItem.trainerName,
-          userEmail: req.user.email,
-          savedAt: new Date(),
-        };
-
-        await favoritesCollection.insertOne(newFav);
-        res.status(201).json({
-          isFavorite: true,
-          message: "Successfully added to your favorites!",
-        });
-      } catch (err) {
-        res.status(500).json({ message: "Failed to add favorite" });
-      }
-    });
+      },
+    );
 
     // Get Logged-in User's Favorites
     app.get("/api/favorites/my", verifyToken, async (req, res) => {
@@ -1021,12 +1100,16 @@ async function run() {
         try {
           const { experience, specialty, availableTime } = req.body;
           if (!experience || !specialty) {
-            return res.status(400).json({ message: "Experience and specialty are required" });
+            return res
+              .status(400)
+              .json({ message: "Experience and specialty are required" });
           }
 
           const user = await getUserByEmail(req.user.email);
           if (user.role === "trainer") {
-            return res.status(400).json({ message: "You are already a trainer" });
+            return res
+              .status(400)
+              .json({ message: "You are already a trainer" });
           }
 
           // Check for existing pending application
@@ -1037,7 +1120,8 @@ async function run() {
 
           if (existingPending) {
             return res.status(400).json({
-              message: "You already have a pending trainer application under review",
+              message:
+                "You already have a pending trainer application under review",
             });
           }
 
@@ -1053,16 +1137,20 @@ async function run() {
             submittedAt: new Date(),
           };
 
-          const result = await trainerApplicationsCollection.insertOne(application);
+          const result =
+            await trainerApplicationsCollection.insertOne(application);
           res.status(201).json({
             success: true,
-            message: "Application submitted successfully! Status is now Pending.",
+            message:
+              "Application submitted successfully! Status is now Pending.",
             applicationId: result.insertedId,
           });
         } catch (err) {
-          res.status(500).json({ message: "Failed to submit trainer application" });
+          res
+            .status(500)
+            .json({ message: "Failed to submit trainer application" });
         }
-      }
+      },
     );
 
     // Get User's Own Trainer Application Status
@@ -1081,17 +1169,22 @@ async function run() {
     });
 
     // Get All Pending Trainer Applications (Admin)
-    app.get("/api/trainer-applications", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const applications = await trainerApplicationsCollection
-          .find({ status: "Pending" })
-          .sort({ submittedAt: -1 })
-          .toArray();
-        res.json(applications);
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch applications" });
-      }
-    });
+    app.get(
+      "/api/trainer-applications",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const applications = await trainerApplicationsCollection
+            .find({ status: "Pending" })
+            .sort({ submittedAt: -1 })
+            .toArray();
+          res.json(applications);
+        } catch (err) {
+          res.status(500).json({ message: "Failed to fetch applications" });
+        }
+      },
+    );
 
     // Review Trainer Application (Admin: Approve or Reject with Feedback)
     app.patch(
@@ -1104,7 +1197,9 @@ async function run() {
           const { status, feedback } = req.body;
 
           if (!["Approved", "Rejected"].includes(status)) {
-            return res.status(400).json({ message: "Status must be Approved or Rejected" });
+            return res
+              .status(400)
+              .json({ message: "Status must be Approved or Rejected" });
           }
 
           if (!ObjectId.isValid(id)) {
@@ -1126,14 +1221,14 @@ async function run() {
                 feedback: feedback || "",
                 reviewedAt: new Date(),
               },
-            }
+            },
           );
 
           if (status === "Approved") {
             // Update user role to Trainer
             await usersCollection.updateOne(
               { email: appItem.userEmail },
-              { $set: { role: "trainer" } }
+              { $set: { role: "trainer" } },
             );
 
             // Send in-app notification
@@ -1165,7 +1260,7 @@ async function run() {
         } catch (err) {
           res.status(500).json({ message: "Failed to update application" });
         }
-      }
+      },
     );
 
     /* ========================================================
@@ -1186,79 +1281,94 @@ async function run() {
     });
 
     // Block / Unblock User (Soft Block)
-    app.patch("/api/users/:id/status", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { status } = req.body;
+    app.patch(
+      "/api/users/:id/status",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status } = req.body;
 
-        if (!["active", "blocked"].includes(status)) {
-          return res.status(400).json({ message: "Invalid status" });
+          if (!["active", "blocked"].includes(status)) {
+            return res.status(400).json({ message: "Invalid status" });
+          }
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid user ID" });
+          }
+
+          await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status } },
+          );
+
+          res.json({
+            success: true,
+            message: `User status updated to ${status}`,
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to update user status" });
         }
-
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({ message: "Invalid user ID" });
-        }
-
-        await usersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status } }
-        );
-
-        res.json({
-          success: true,
-          message: `User status updated to ${status}`,
-        });
-      } catch (err) {
-        res.status(500).json({ message: "Failed to update user status" });
-      }
-    });
+      },
+    );
 
     // Make User Admin
-    app.patch("/api/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { role } = req.body;
+    app.patch(
+      "/api/users/:id/role",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { role } = req.body;
 
-        if (!["admin", "trainer", "user"].includes(role)) {
-          return res.status(400).json({ message: "Invalid role" });
+          if (!["admin", "trainer", "user"].includes(role)) {
+            return res.status(400).json({ message: "Invalid role" });
+          }
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid user ID" });
+          }
+
+          await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role } },
+          );
+
+          res.json({ success: true, message: `User role promoted to ${role}` });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to change user role" });
         }
-
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({ message: "Invalid user ID" });
-        }
-
-        await usersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role } }
-        );
-
-        res.json({ success: true, message: `User role promoted to ${role}` });
-      } catch (err) {
-        res.status(500).json({ message: "Failed to change user role" });
-      }
-    });
+      },
+    );
 
     // Demote Trainer to User
-    app.patch("/api/users/:id/demote", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const { id } = req.params;
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({ message: "Invalid user ID" });
+    app.patch(
+      "/api/users/:id/demote",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid user ID" });
+          }
+
+          await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "user" } },
+          );
+
+          res.json({
+            success: true,
+            message: "Trainer demoted to standard user successfully",
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to demote trainer" });
         }
-
-        await usersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role: "user" } }
-        );
-
-        res.json({
-          success: true,
-          message: "Trainer demoted to standard user successfully",
-        });
-      } catch (err) {
-        res.status(500).json({ message: "Failed to demote trainer" });
-      }
-    });
+      },
+    );
 
     // Get Active Trainers List
     app.get("/api/users/trainers", async (req, res) => {
@@ -1326,7 +1436,9 @@ async function run() {
           return res.status(400).json({ message: "Invalid post ID" });
         }
 
-        const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+        const post = await forumPostsCollection.findOne({
+          _id: new ObjectId(id),
+        });
         if (!post) {
           return res.status(404).json({ message: "Post not found" });
         }
@@ -1347,7 +1459,9 @@ async function run() {
         try {
           const { title, image, description } = req.body;
           if (!title || !description) {
-            return res.status(400).json({ message: "Title and description required" });
+            return res
+              .status(400)
+              .json({ message: "Title and description required" });
           }
 
           const user = await getUserByEmail(req.user.email);
@@ -1377,7 +1491,7 @@ async function run() {
         } catch (err) {
           res.status(500).json({ message: "Failed to create forum post" });
         }
-      }
+      },
     );
 
     // DELETE /api/forum/:id - Delete post (Trainer deletes own, Admin deletes any)
@@ -1388,7 +1502,9 @@ async function run() {
           return res.status(400).json({ message: "Invalid post ID" });
         }
 
-        const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+        const post = await forumPostsCollection.findOne({
+          _id: new ObjectId(id),
+        });
         if (!post) {
           return res.status(404).json({ message: "Post not found" });
         }
@@ -1398,7 +1514,9 @@ async function run() {
         const isAuthor = post.authorEmail === req.user.email;
 
         if (!isAdmin && !isAuthor) {
-          return res.status(403).json({ message: "Unauthorized to delete this post" });
+          return res
+            .status(403)
+            .json({ message: "Unauthorized to delete this post" });
         }
 
         await forumPostsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -1409,30 +1527,40 @@ async function run() {
     });
 
     // GET /api/forum/trainer/my - Trainer's own posts
-    app.get("/api/forum/trainer/my", verifyToken, verifyTrainer, async (req, res) => {
-      try {
-        const posts = await forumPostsCollection
-          .find({ authorEmail: req.user.email })
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.json(posts);
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch trainer posts" });
-      }
-    });
+    app.get(
+      "/api/forum/trainer/my",
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const posts = await forumPostsCollection
+            .find({ authorEmail: req.user.email })
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(posts);
+        } catch (err) {
+          res.status(500).json({ message: "Failed to fetch trainer posts" });
+        }
+      },
+    );
 
     // GET /api/forum/admin/all - All posts for admin moderation
-    app.get("/api/forum/admin/all", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const posts = await forumPostsCollection
-          .find()
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.json(posts);
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch forum posts" });
-      }
-    });
+    app.get(
+      "/api/forum/admin/all",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const posts = await forumPostsCollection
+            .find()
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(posts);
+        } catch (err) {
+          res.status(500).json({ message: "Failed to fetch forum posts" });
+        }
+      },
+    );
 
     // POST /api/forum/:id/vote - Like or Dislike (User can like only once, soft block checked)
     app.post(
@@ -1446,14 +1574,18 @@ async function run() {
           const userEmail = req.user.email;
 
           if (!["like", "dislike"].includes(type)) {
-            return res.status(400).json({ message: "Type must be like or dislike" });
+            return res
+              .status(400)
+              .json({ message: "Type must be like or dislike" });
           }
 
           if (!ObjectId.isValid(id)) {
             return res.status(400).json({ message: "Invalid post ID" });
           }
 
-          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          const post = await forumPostsCollection.findOne({
+            _id: new ObjectId(id),
+          });
           if (!post) {
             return res.status(404).json({ message: "Post not found" });
           }
@@ -1483,7 +1615,7 @@ async function run() {
 
           await forumPostsCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: { likes, dislikes } }
+            { $set: { likes, dislikes } },
           );
 
           res.json({
@@ -1496,7 +1628,7 @@ async function run() {
         } catch (err) {
           res.status(500).json({ message: "Failed to process vote" });
         }
-      }
+      },
     );
 
     // POST /api/forum/:id/comments - Add Comment or Reply (Soft block checked)
@@ -1510,14 +1642,18 @@ async function run() {
           const { content, parentCommentId } = req.body;
 
           if (!content || !content.trim()) {
-            return res.status(400).json({ message: "Comment content cannot be empty" });
+            return res
+              .status(400)
+              .json({ message: "Comment content cannot be empty" });
           }
 
           if (!ObjectId.isValid(id)) {
             return res.status(400).json({ message: "Invalid post ID" });
           }
 
-          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          const post = await forumPostsCollection.findOne({
+            _id: new ObjectId(id),
+          });
           if (!post) {
             return res.status(404).json({ message: "Post not found" });
           }
@@ -1529,7 +1665,9 @@ async function run() {
             // Reply to comment
             const parent = comments.find((c) => c.id === parentCommentId);
             if (!parent) {
-              return res.status(404).json({ message: "Parent comment not found" });
+              return res
+                .status(404)
+                .json({ message: "Parent comment not found" });
             }
 
             if (!parent.replies) parent.replies = [];
@@ -1558,7 +1696,7 @@ async function run() {
 
           await forumPostsCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: { comments } }
+            { $set: { comments } },
           );
 
           res.status(201).json({
@@ -1569,7 +1707,7 @@ async function run() {
         } catch (err) {
           res.status(500).json({ message: "Failed to add comment" });
         }
-      }
+      },
     );
 
     // PATCH /api/forum/:id/comments/:commentId - Edit Comment
@@ -1586,7 +1724,9 @@ async function run() {
             return res.status(400).json({ message: "Content is required" });
           }
 
-          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          const post = await forumPostsCollection.findOne({
+            _id: new ObjectId(id),
+          });
           if (!post) {
             return res.status(404).json({ message: "Post not found" });
           }
@@ -1622,14 +1762,14 @@ async function run() {
 
           await forumPostsCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: { comments } }
+            { $set: { comments } },
           );
 
           res.json({ success: true, message: "Comment updated", comments });
         } catch (err) {
           res.status(500).json({ message: "Failed to edit comment" });
         }
-      }
+      },
     );
 
     // DELETE /api/forum/:id/comments/:commentId - Delete Comment
@@ -1639,7 +1779,9 @@ async function run() {
       async (req, res) => {
         try {
           const { id, commentId } = req.params;
-          const post = await forumPostsCollection.findOne({ _id: new ObjectId(id) });
+          const post = await forumPostsCollection.findOne({
+            _id: new ObjectId(id),
+          });
           if (!post) {
             return res.status(404).json({ message: "Post not found" });
           }
@@ -1654,7 +1796,9 @@ async function run() {
             if (comments[topIndex].userEmail === req.user.email || isAdmin) {
               comments.splice(topIndex, 1);
             } else {
-              return res.status(403).json({ message: "Unauthorized to delete this comment" });
+              return res
+                .status(403)
+                .json({ message: "Unauthorized to delete this comment" });
             }
           } else {
             // Check in replies
@@ -1663,7 +1807,10 @@ async function run() {
               if (c.replies) {
                 const repIndex = c.replies.findIndex((r) => r.id === commentId);
                 if (repIndex !== -1) {
-                  if (c.replies[repIndex].userEmail === req.user.email || isAdmin) {
+                  if (
+                    c.replies[repIndex].userEmail === req.user.email ||
+                    isAdmin
+                  ) {
                     c.replies.splice(repIndex, 1);
                     foundReply = true;
                   }
@@ -1671,20 +1818,22 @@ async function run() {
               }
             });
             if (!foundReply) {
-              return res.status(404).json({ message: "Comment not found or unauthorized" });
+              return res
+                .status(404)
+                .json({ message: "Comment not found or unauthorized" });
             }
           }
 
           await forumPostsCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: { comments } }
+            { $set: { comments } },
           );
 
           res.json({ success: true, message: "Comment deleted", comments });
         } catch (err) {
           res.status(500).json({ message: "Failed to delete comment" });
         }
-      }
+      },
     );
 
     /* ========================================================
@@ -1717,30 +1866,35 @@ async function run() {
     });
 
     // Trainer Stats
-    app.get("/api/stats/trainer", verifyToken, verifyTrainer, async (req, res) => {
-      try {
-        const totalClasses = await classesCollection.countDocuments({
-          trainerEmail: req.user.email,
-        });
+    app.get(
+      "/api/stats/trainer",
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const totalClasses = await classesCollection.countDocuments({
+            trainerEmail: req.user.email,
+          });
 
-        // Sum enrolled students from trainer's classes
-        const classes = await classesCollection
-          .find({ trainerEmail: req.user.email })
-          .toArray();
-        const classIds = classes.map((c) => c._id.toString());
+          // Sum enrolled students from trainer's classes
+          const classes = await classesCollection
+            .find({ trainerEmail: req.user.email })
+            .toArray();
+          const classIds = classes.map((c) => c._id.toString());
 
-        const totalStudents = await bookingsCollection.countDocuments({
-          classId: { $in: classIds },
-        });
+          const totalStudents = await bookingsCollection.countDocuments({
+            classId: { $in: classIds },
+          });
 
-        res.json({
-          totalClasses,
-          totalStudents,
-        });
-      } catch (err) {
-        res.status(500).json({ message: "Failed to fetch trainer stats" });
-      }
-    });
+          res.json({
+            totalClasses,
+            totalStudents,
+          });
+        } catch (err) {
+          res.status(500).json({ message: "Failed to fetch trainer stats" });
+        }
+      },
+    );
 
     // Admin Stats (Includes Recharts Analytics Data!)
     app.get("/api/stats/admin", verifyToken, verifyAdmin, async (req, res) => {
@@ -1750,17 +1904,28 @@ async function run() {
         const totalBookedClasses = await bookingsCollection.countDocuments();
 
         // Analytics chart data by category & bookings
-        const categories = ["Yoga", "HIIT", "Strength", "Cardio", "Pilates", "CrossFit"];
+        const categories = [
+          "Yoga",
+          "HIIT",
+          "Strength",
+          "Cardio",
+          "Pilates",
+          "CrossFit",
+        ];
         const categoryData = await Promise.all(
           categories.map(async (cat) => {
-            const count = await classesCollection.countDocuments({ category: cat });
-            const bookings = await bookingsCollection.countDocuments({ category: cat });
+            const count = await classesCollection.countDocuments({
+              category: cat,
+            });
+            const bookings = await bookingsCollection.countDocuments({
+              category: cat,
+            });
             return {
               category: cat,
               classes: count,
               bookings: bookings,
             };
-          })
+          }),
         );
 
         // Monthly bookings trend (recent months)
@@ -1770,7 +1935,11 @@ async function run() {
           { month: "Mar", bookings: 35, revenue: 1050 },
           { month: "Apr", bookings: 48, revenue: 1440 },
           { month: "May", bookings: 65, revenue: 1950 },
-          { month: "Jun", bookings: totalBookedClasses + 40, revenue: (totalBookedClasses + 40) * 35 },
+          {
+            month: "Jun",
+            bookings: totalBookedClasses + 40,
+            revenue: (totalBookedClasses + 40) * 35,
+          },
         ];
 
         res.json({
@@ -1808,7 +1977,7 @@ async function run() {
         if (ObjectId.isValid(id)) {
           await notificationsCollection.updateOne(
             { _id: new ObjectId(id), userEmail: req.user.email },
-            { $set: { read: true } }
+            { $set: { read: true } },
           );
         }
         res.json({ success: true });
@@ -1825,7 +1994,10 @@ async function run() {
       try {
         const classCount = await classesCollection.countDocuments();
         if (classCount > 0) {
-          return res.json({ message: "Database already populated", count: classCount });
+          return res.json({
+            message: "Database already populated",
+            count: classCount,
+          });
         }
 
         // Seed classes directly from MongoDB Atlas 'defaultValu' collection
@@ -1847,13 +2019,17 @@ async function run() {
         // Sample forum posts
         const samplePosts = [
           {
-            title: "The Ultimate Guide to Pre-Workout Nutrition & Sustained Energy",
-            image: "https://images.unsplash.com/photo-1490645935967-10de6ba17061?q=80&w=1000&auto=format&fit=crop",
-            description: "Optimal nutrition can elevate your workout from mediocre to peak performance. In this comprehensive guide, we dissect complex carbohydrates vs fast-acting glucose, electrolytes timing, and hydration strategies to fuel high-intensity sessions without gastrointestinal distress. Remember to balance glycemic index and ingest protein 60-90 minutes prior to lifting heavy.",
+            title:
+              "The Ultimate Guide to Pre-Workout Nutrition & Sustained Energy",
+            image:
+              "https://images.unsplash.com/photo-1490645935967-10de6ba17061?q=80&w=1000&auto=format&fit=crop",
+            description:
+              "Optimal nutrition can elevate your workout from mediocre to peak performance. In this comprehensive guide, we dissect complex carbohydrates vs fast-acting glucose, electrolytes timing, and hydration strategies to fuel high-intensity sessions without gastrointestinal distress. Remember to balance glycemic index and ingest protein 60-90 minutes prior to lifting heavy.",
             authorName: "Marcus Vance",
             authorEmail: "marcus.trainer@pulseforge.com",
             authorRole: "trainer",
-            authorImage: "https://images.unsplash.com/photo-1568602471122-7832951cc4c5?q=80&w=400&auto=format&fit=crop",
+            authorImage:
+              "https://images.unsplash.com/photo-1568602471122-7832951cc4c5?q=80&w=400&auto=format&fit=crop",
             likes: ["admin@pulseforge.com"],
             dislikes: [],
             comments: [
@@ -1861,8 +2037,10 @@ async function run() {
                 id: "c1",
                 userEmail: "alex.athlete@gmail.com",
                 userName: "Alex Morgan",
-                userImage: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=400&auto=format&fit=crop",
-                content: "This changed my morning workouts completely! The oats and banana combo gave me steady power through my 75-minute lifting session.",
+                userImage:
+                  "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=400&auto=format&fit=crop",
+                content:
+                  "This changed my morning workouts completely! The oats and banana combo gave me steady power through my 75-minute lifting session.",
                 createdAt: new Date(),
                 replies: [],
               },
@@ -1870,39 +2048,51 @@ async function run() {
             createdAt: new Date(Date.now() - 3 * 86400000),
           },
           {
-            title: "Breathwork & Heart Rate Recovery: Science Behind Cold Down Regulation",
-            image: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=1000&auto=format&fit=crop",
-            description: "Most athletes focus obsessively on exertion, but true athletic adaptation occurs during nervous system recovery. Learn how 4-7-8 breathing downregulates sympathetic overdrive, reduces post-exercise cortisol levels, and accelerates lymphatic clearance so you wake up ready to perform tomorrow.",
+            title:
+              "Breathwork & Heart Rate Recovery: Science Behind Cold Down Regulation",
+            image:
+              "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=1000&auto=format&fit=crop",
+            description:
+              "Most athletes focus obsessively on exertion, but true athletic adaptation occurs during nervous system recovery. Learn how 4-7-8 breathing downregulates sympathetic overdrive, reduces post-exercise cortisol levels, and accelerates lymphatic clearance so you wake up ready to perform tomorrow.",
             authorName: "Elena Rostova",
             authorEmail: "elena.yoga@pulseforge.com",
             authorRole: "trainer",
-            authorImage: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=400&auto=format&fit=crop",
+            authorImage:
+              "https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=400&auto=format&fit=crop",
             likes: [],
             dislikes: [],
             comments: [],
             createdAt: new Date(Date.now() - 2 * 86400000),
           },
           {
-            title: "Breaking Plateaus: Progressive Overload Mechanics for Strength",
-            image: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1000&auto=format&fit=crop",
-            description: "Stuck on your bench press or deadlift numbers for months? Discover micro-loading strategies, wave loading, and how adjusting rep cadence from 2-0-2 to 4-1-1 stimulates untapped myofibrillar hypertrophy. Track volume load mathematically to break any stagnation.",
+            title:
+              "Breaking Plateaus: Progressive Overload Mechanics for Strength",
+            image:
+              "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1000&auto=format&fit=crop",
+            description:
+              "Stuck on your bench press or deadlift numbers for months? Discover micro-loading strategies, wave loading, and how adjusting rep cadence from 2-0-2 to 4-1-1 stimulates untapped myofibrillar hypertrophy. Track volume load mathematically to break any stagnation.",
             authorName: "Derrick Cole",
             authorEmail: "derrick.coach@pulseforge.com",
             authorRole: "trainer",
-            authorImage: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=400&auto=format&fit=crop",
+            authorImage:
+              "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=400&auto=format&fit=crop",
             likes: [],
             dislikes: [],
             comments: [],
             createdAt: new Date(Date.now() - 1 * 86400000),
           },
           {
-            title: "Welcome to PulseForge Community: Guidelines, Safety & Goals",
-            image: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=1000&auto=format&fit=crop",
-            description: "Welcome to PulseForge! Our forum is built on mutual respect, evidence-based fitness advice, and relentless encouragement. Whether you are stepping into a gym for the first time or training for your first triathlon, share your milestones, ask questions, and lift each other up.",
+            title:
+              "Welcome to PulseForge Community: Guidelines, Safety & Goals",
+            image:
+              "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=1000&auto=format&fit=crop",
+            description:
+              "Welcome to PulseForge! Our forum is built on mutual respect, evidence-based fitness advice, and relentless encouragement. Whether you are stepping into a gym for the first time or training for your first triathlon, share your milestones, ask questions, and lift each other up.",
             authorName: "PulseForge Admin",
             authorEmail: "admin@pulseforge.com",
             authorRole: "admin",
-            authorImage: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=400&auto=format&fit=crop",
+            authorImage:
+              "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=400&auto=format&fit=crop",
             likes: [],
             dislikes: [],
             comments: [],
@@ -1914,19 +2104,25 @@ async function run() {
 
         // Seed default Admin user
         const adminEmail = "admin@pulseforge.com";
-        const existingAdmin = await usersCollection.findOne({ email: adminEmail });
+        const existingAdmin = await usersCollection.findOne({
+          email: adminEmail,
+        });
         if (!existingAdmin) {
           await usersCollection.insertOne({
             name: "PulseForge Master Admin",
             email: adminEmail,
-            image: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=400&auto=format&fit=crop",
+            image:
+              "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=400&auto=format&fit=crop",
             role: "admin",
             status: "active",
             createdAt: new Date(),
           });
         }
 
-        res.json({ success: true, message: "Sample data seeded successfully!" });
+        res.json({
+          success: true,
+          message: "Sample data seeded successfully!",
+        });
       } catch (err) {
         console.error("Seed error:", err);
         res.status(500).json({ message: "Seeding failed" });
