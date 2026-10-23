@@ -35,6 +35,15 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
+// Immediate Root Health Check for Vercel
+app.get("/", (req, res) => {
+  res.json({
+    name: "PulseForge API",
+    status: "Operational",
+    version: "1.0.0",
+  });
+});
+
 // MongoDB Client
 const client = new MongoClient(uri, {
   serverApi: {
