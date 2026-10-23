@@ -19,6 +19,7 @@
     "jose-cjs": "^6.2.3",
     "mongodb": "^7.7.0",
     "mongoose": "^9.11.1",
+    "nodemailer": "^10.2.1",
     "nodemon": "^3.1.14",
     "stripe": "^23.0.0"
   },

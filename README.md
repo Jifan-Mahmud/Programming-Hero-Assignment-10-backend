@@ -48,6 +48,38 @@
 
 ## 📡 REST API Specification
 
+### 💬 1-on-1 Chat Endpoints
+| Method | Endpoint | Access | Description |
+|---|---|:---:|---|
+| `GET` | `/api/chat/conversations` | Authenticated | Retrieve active chat conversations |
+| `POST` | `/api/chat/start` | Authenticated | Initiate new 1-on-1 chat with trainer/member |
+| `GET` | `/api/chat/messages/:id` | Authenticated | Fetch message history for a conversation |
+| `POST` | `/api/chat/messages` | Authenticated | Send direct message and increment unread count |
+| `PATCH` | `/api/chat/read/:id` | Authenticated | Mark conversation as read |
+
+### 🥗 Diet & Workout Tracker Endpoints
+| Method | Endpoint | Access | Description |
+|---|---|:---:|---|
+| `GET` | `/api/plans/my-plan` | Authenticated | Fetch assigned diet and workout protocol |
+| `POST` | `/api/plans/assign` | Trainer / Admin | Assign or update custom macro & workout plan for an athlete |
+| `GET` | `/api/plans/trainer/clients` | Trainer / Admin | Retrieve enrolled athletes across trainer's classes |
+| `GET` | `/api/plans/log/:date` | Authenticated | Fetch athlete daily checklist log for date |
+| `POST` | `/api/plans/log` | Authenticated | Check off meals, workouts, and log daily water intake |
+
+### 📈 Body Transformation & Progress Endpoints
+| Method | Endpoint | Access | Description |
+|---|---|:---:|---|
+| `GET` | `/api/progress/my` | Authenticated | Fetch weigh-in and body composition history |
+| `POST` | `/api/progress/log` | Authenticated | Log new weight, body fat %, and tape measurements |
+| `DELETE` | `/api/progress/:id` | Authenticated | Remove measurement record |
+
+### ⭐ Reviews & Ratings Endpoints
+| Method | Endpoint | Access | Description |
+|---|---|:---:|---|
+| `GET` | `/api/reviews/class/:id` | Public | Fetch reviews, average star rating, and breakdown bars |
+| `POST` | `/api/reviews` | Authenticated | Post verified athlete review and recalculate class rating |
+| `GET` | `/api/reviews/featured` | Public | Top 5-star athlete testimonials for homepage showcase |
+
 ### 🔐 Authentication & Session
 | Method | Endpoint | Access | Description |
 |---|---|:---:|---|
