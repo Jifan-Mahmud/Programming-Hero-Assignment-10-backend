@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <a href="https://pulseforge-api.vercel.app">📡 Live API Base</a> •
-  <a href="https://pulseforge-fitness.vercel.app">🌐 Live Frontend Client</a> •
+  <a href="https://assignment-10-backend-inky.vercel.app">📡 Live API Base</a> •
+  <a href="https://assignment-10-frontend-amber.vercel.app">🌐 Live Frontend Client</a> •
   <a href="https://github.com/Jifan-Mahmud/Programming-Hero-Assignment-10-frontend">💻 Frontend Repository</a>
 </p>
 
@@ -25,8 +25,8 @@
 
 | Resource | URL |
 |---|---|
-| **Live API Endpoint** | [https://pulseforge-api.vercel.app](https://pulseforge-api.vercel.app) |
-| **Live Frontend Client** | [https://pulseforge-fitness.vercel.app](https://pulseforge-fitness.vercel.app) |
+| **Live API Endpoint** | [https://assignment-10-backend-inky.vercel.app](https://assignment-10-backend-inky.vercel.app) |
+| **Live Frontend Client** | [https://assignment-10-frontend-amber.vercel.app](https://assignment-10-frontend-amber.vercel.app) |
 | **Backend GitHub Repo** | [Programming-Hero-Assignment-10-backend](https://github.com/Jifan-Mahmud/Programming-Hero-Assignment-10-backend) |
 | **Frontend GitHub Repo** | [Programming-Hero-Assignment-10-frontend](https://github.com/Jifan-Mahmud/Programming-Hero-Assignment-10-frontend) |
 
